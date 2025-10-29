@@ -2,20 +2,26 @@
 
 import { useState, useEffect } from 'react';
 import { CoverageMetrics } from '@/lib/types';
+import { useCompany } from '@/lib/context/CompanyContext';
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<CoverageMetrics[]>([]);
   const [loading, setLoading] = useState(true);
   const [useMockData, setUseMockData] = useState(false);
+  const { companyId, companyName } = useCompany();
 
   useEffect(() => {
     loadMetrics();
-  }, [useMockData]);
+  }, [useMockData, companyId]);
 
   const loadMetrics = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/coverage?mock=${useMockData}`);
+      const url = companyId && !useMockData
+        ? `/api/coverage?companyId=${companyId}`
+        : `/api/coverage?mock=true`;
+
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         setMetrics(data.metrics || []);
@@ -41,7 +47,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Knowledge Coverage Dashboard</h1>
           <p className="mt-2 text-gray-600">
-            Track knowledge capture progress across all topics
+            {companyName ? `${companyName} - ` : ''}Track knowledge capture progress across all topics
           </p>
         </div>
 

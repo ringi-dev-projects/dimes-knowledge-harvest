@@ -4,10 +4,21 @@ AI-powered platform to convert senior employees' tacit know-how into searchable,
 
 ## Features
 
-- **Topic Seed Generation**: Auto-generate knowledge taxonomy from company information
-- **Voice Interviews**: WebRTC-based live interviews with AI interviewer (Azure OpenAI Realtime API)
-- **Coverage Tracking**: Visual dashboard showing knowledge capture progress
-- **Documentation Export**: Generate formatted handbooks viewable in-browser or export as HTML/DOCX
+### ✅ Production-Ready Features
+
+- **Topic Seed Generation**: Auto-generate knowledge taxonomy from company information using Azure OpenAI
+- **Interview Management**: Create and manage interview sessions with transcript storage
+- **Knowledge Extraction**: AI-powered extraction of procedures, facts, troubleshooting, and best practices from interviews
+- **Coverage Calculation**: Automatic calculation of topic coverage metrics based on interview data
+- **Real-Time Dashboard**: Visual progress tracking showing coverage percentage, confidence scores, and next questions
+- **Documentation Generation**: Auto-generate formatted documentation from extracted knowledge atoms
+- **Multi-Format Export**: Export handbooks as HTML or DOCX
+- **Company Context**: Multi-company support with global state management
+
+### 🚧 In Progress
+
+- **Voice Interviews**: WebRTC structure ready, Azure Realtime API integration pending
+- **Azure Speech Integration**: Enhanced transcription with speaker diarization
 
 ## Tech Stack
 
@@ -64,45 +75,133 @@ npm run dev
 4. Click "Generate Documentation" to see formatted handbook
 5. Export as HTML or DOCX
 
-### Option 2: Full Demo from Scratch
+### Option 2: Full Production Flow with Real Data
+
+**Step 1: Generate Topic Tree**
 1. Go to Seed page (`/seed`)
-2. Enter company details and URL
-3. Generate topic tree with AI
-4. Start voice interview (`/interview`)
-5. Conduct live interview with AI
-6. View updated coverage on Dashboard
-7. Generate and export documentation
+2. Enter company name, URL (optional), and description
+3. Click "Generate Topic Tree"
+4. AI generates structured knowledge taxonomy
+5. Company context is automatically set
+
+**Step 2: Conduct Interview** (Currently uses mock data)
+1. Go to Interview page (`/interview`)
+2. Click "Start Interview"
+3. Allow microphone access
+4. Conduct interview (mock conversation for now)
+5. Click "Stop Interview" to save
+
+**Step 3: Extract Knowledge** (API call required)
+```bash
+curl -X POST http://localhost:3001/api/knowledge/extract \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": 1}'
+```
+
+**Step 4: Calculate Coverage** (API call required)
+```bash
+curl -X POST http://localhost:3001/api/coverage/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"companyId": 1}'
+```
+
+**Step 5: View Results**
+1. Go to Dashboard (`/dashboard`) - see real coverage metrics
+2. Go to Docs (`/docs/1`) - see generated documentation
+3. Export as HTML or DOCX
+
+---
+
+## API Endpoints
+
+### Production Endpoints (Real Data)
+
+**Topic Generation**
+```
+POST /api/seed-map
+Body: { companyName, description, url? }
+Returns: { success, topicTree, companyId }
+```
+
+**Interview Management**
+```
+POST /api/realtime/session
+Body: { companyId }
+Returns: { sessionId, sessionToken, instructions }
+
+POST /api/interview/end
+Body: { sessionId, messages }
+Returns: { success, sessionId }
+```
+
+**Knowledge Processing**
+```
+POST /api/knowledge/extract
+Body: { sessionId }
+Returns: { success, knowledgeAtoms, atomsExtracted }
+
+POST /api/coverage/calculate
+Body: { companyId }
+Returns: { success, coverageResults, sessionsProcessed }
+```
+
+**Data Retrieval**
+```
+GET /api/coverage?companyId={id}
+Returns: { success, metrics[] }
+
+GET /api/docs/{companyId}
+Returns: { success, document }
+
+POST /api/export/docs
+Body: { companyId, format: 'html'|'docx' }
+Returns: File download
+```
+
+---
+
+## Documentation
+
+- **[END-TO-END-FLOW.md](docs/END-TO-END-FLOW.md)** - Complete system architecture and flow
+- **[CODEBASE-REVIEW.md](docs/CODEBASE-REVIEW.md)** - Issues and fixes implemented
+- **[PRODUCTION-IMPLEMENTATION.md](docs/PRODUCTION-IMPLEMENTATION.md)** - Production features and workflow
 
 ## Project Structure
 
 ```
 ├── app/
-│   ├── page.tsx                 # Home page
-│   ├── seed/page.tsx            # Topic generation
-│   ├── interview/page.tsx       # Voice interview interface
-│   ├── dashboard/page.tsx       # Coverage metrics
-│   ├── docs/[id]/page.tsx       # Documentation viewer
+│   ├── page.tsx                        # Home page
+│   ├── seed/page.tsx                   # Topic generation UI
+│   ├── interview/page.tsx              # Voice interview interface
+│   ├── dashboard/page.tsx              # Coverage metrics dashboard
+│   ├── docs/[id]/page.tsx              # Documentation viewer
 │   └── api/
-│       ├── seed-map/route.ts    # Topic tree generation
-│       ├── realtime/session/    # Realtime API session
-│       ├── coverage/route.ts    # Coverage metrics
-│       ├── docs/[id]/route.ts   # Document fetching
-│       └── export/docs/route.ts # Document export
+│       ├── seed-map/route.ts           # Topic tree generation (Azure OpenAI)
+│       ├── interview/
+│       │   └── end/route.ts            # Save interview session ✨ NEW
+│       ├── realtime/session/route.ts   # Create interview session
+│       ├── knowledge/
+│       │   └── extract/route.ts        # Extract knowledge atoms ✨ NEW
+│       ├── coverage/
+│       │   ├── route.ts                # Get coverage metrics
+│       │   └── calculate/route.ts      # Calculate coverage ✨ NEW
+│       ├── docs/[id]/route.ts          # Generate documentation (real data) ✨ UPDATED
+│       └── export/docs/route.ts        # Export as HTML/DOCX
 ├── lib/
-│   ├── db/                      # Database schema & client
-│   └── types.ts                 # TypeScript definitions
+│   ├── db/
+│   │   ├── index.ts                    # Database client (improved) ✨ UPDATED
+│   │   └── schema.ts                   # Database schema
+│   ├── context/
+│   │   └── CompanyContext.tsx          # Global company state ✨ NEW
+│   └── types.ts                        # TypeScript definitions
+├── docs/
+│   ├── END-TO-END-FLOW.md              # Architecture documentation
+│   ├── CODEBASE-REVIEW.md              # Review findings
+│   └── PRODUCTION-IMPLEMENTATION.md     # Production features guide ✨ NEW
 ├── data/
-│   └── knowledge-harvest.db     # SQLite database (auto-created)
-└── public/                      # Static assets
+│   └── knowledge-harvest.db            # SQLite database (auto-created)
+└── public/                             # Static assets
 ```
-
-## API Routes
-
-- `POST /api/seed-map` - Generate topic tree from company info
-- `POST /api/realtime/session` - Create interview session
-- `GET /api/coverage?mock=true` - Get coverage metrics
-- `GET /api/docs/[id]` - Fetch document
-- `POST /api/export/docs` - Export as HTML/DOCX
 
 ## Database Schema
 

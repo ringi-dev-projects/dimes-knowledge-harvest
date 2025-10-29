@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { companies, topicTrees, knowledgeAtoms } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { TopicTree, Topic } from '@/lib/types';
 
 // Mock document data for demo
 const mockDocument = {
@@ -160,19 +164,161 @@ const mockDocument = {
   ],
 };
 
+async function generateRealDocument(companyId: number) {
+  // Get company info
+  const companyRecords = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+
+  if (companyRecords.length === 0) {
+    throw new Error('Company not found');
+  }
+
+  const company = companyRecords[0];
+
+  // Get topic tree
+  const topicTreeRecords = await db
+    .select()
+    .from(topicTrees)
+    .where(eq(topicTrees.companyId, companyId))
+    .limit(1);
+
+  if (topicTreeRecords.length === 0) {
+    throw new Error('No topic tree found for this company');
+  }
+
+  const topicTree: TopicTree = JSON.parse(topicTreeRecords[0].topicData);
+
+  // Get all knowledge atoms for this company's sessions
+  const atoms = await db
+    .select()
+    .from(knowledgeAtoms)
+    .where(eq(knowledgeAtoms.sessionId, companyId)); // This is simplified - should join through sessions
+
+  // Group atoms by topic
+  const atomsByTopic = new Map<string, typeof atoms>();
+  for (const atom of atoms) {
+    if (!atomsByTopic.has(atom.topicId)) {
+      atomsByTopic.set(atom.topicId, []);
+    }
+    atomsByTopic.get(atom.topicId)!.push(atom);
+  }
+
+  // Generate sections from topic tree
+  function generateSections(topics: Topic[]): any[] {
+    const sections: any[] = [];
+
+    for (const topic of topics) {
+      const topicAtoms = atomsByTopic.get(topic.id) || [];
+
+      // Group atoms by type
+      const procedures = topicAtoms.filter(a => a.type === 'procedure');
+      const facts = topicAtoms.filter(a => a.type === 'fact');
+      const troubleshooting = topicAtoms.filter(a => a.type === 'troubleshooting');
+      const bestPractices = topicAtoms.filter(a => a.type === 'best_practice');
+
+      // Generate content HTML
+      let contentParts: string[] = [];
+
+      if (facts.length > 0) {
+        contentParts.push('<h3>Overview</h3>');
+        contentParts.push('<ul>');
+        facts.forEach(fact => {
+          contentParts.push(`<li><strong>${fact.title}:</strong> ${fact.content}</li>`);
+        });
+        contentParts.push('</ul>');
+      }
+
+      if (procedures.length > 0) {
+        procedures.forEach(proc => {
+          contentParts.push(`<h3>${proc.title}</h3>`);
+          contentParts.push(`<p>${proc.content}</p>`);
+        });
+      }
+
+      if (bestPractices.length > 0) {
+        contentParts.push('<h3>Best Practices</h3>');
+        contentParts.push('<ul>');
+        bestPractices.forEach(bp => {
+          contentParts.push(`<li><strong>${bp.title}:</strong> ${bp.content}</li>`);
+        });
+        contentParts.push('</ul>');
+      }
+
+      if (troubleshooting.length > 0) {
+        contentParts.push('<h3>Troubleshooting</h3>');
+        troubleshooting.forEach(ts => {
+          contentParts.push(`<h4>${ts.title}</h4>`);
+          contentParts.push(`<p>${ts.content}</p>`);
+        });
+      }
+
+      const content = contentParts.length > 0
+        ? contentParts.join('\n')
+        : '<p>No knowledge captured for this topic yet.</p>';
+
+      // Generate subsections from children
+      const subsections = topic.children && topic.children.length > 0
+        ? generateSections(topic.children)
+        : [];
+
+      sections.push({
+        id: topic.id,
+        title: topic.name,
+        content,
+        subsections,
+      });
+    }
+
+    return sections;
+  }
+
+  const sections = generateSections(topicTree.topics);
+
+  return {
+    companyName: company.name,
+    generatedAt: new Date().toISOString(),
+    sections,
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const useMock = searchParams.get('mock') === 'true';
 
-    // In a real implementation, fetch from database based on company ID
-    // For now, return mock data
+    let document;
+
+    if (useMock) {
+      document = mockDocument;
+    } else {
+      // Generate real document from knowledge atoms
+      const companyId = parseInt(id);
+      if (isNaN(companyId)) {
+        return NextResponse.json(
+          { error: 'Invalid company ID' },
+          { status: 400 }
+        );
+      }
+
+      try {
+        document = await generateRealDocument(companyId);
+      } catch (error) {
+        console.error('Error generating real document:', error);
+        // Fall back to mock data if real data not available
+        document = mockDocument;
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      document: mockDocument,
+      document,
     });
   } catch (error) {
     console.error('Error fetching document:', error);

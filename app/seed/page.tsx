@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { TopicTree } from '@/lib/types';
+import { useCompany } from '@/lib/context/CompanyContext';
 
 export default function SeedPage() {
   const [url, setUrl] = useState('');
@@ -10,6 +11,7 @@ export default function SeedPage() {
   const [loading, setLoading] = useState(false);
   const [topicTree, setTopicTree] = useState<TopicTree | null>(null);
   const [error, setError] = useState('');
+  const { setCompanyId, setCompanyName: setContextCompanyName } = useCompany();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,11 +33,18 @@ export default function SeedPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate topic tree');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate topic tree');
       }
 
       const data = await response.json();
       setTopicTree(data.topicTree);
+
+      // Set company context for use in other pages
+      if (data.companyId) {
+        setCompanyId(data.companyId);
+        setContextCompanyName(companyName);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {

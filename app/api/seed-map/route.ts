@@ -114,10 +114,27 @@ Generate a comprehensive topic tree for capturing this organization's knowledge.
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('No response from AI');
+      throw new Error('No response from Azure OpenAI');
     }
 
-    const topicTree: TopicTree = JSON.parse(content);
+    // Parse and validate JSON response
+    let topicTree: TopicTree;
+    try {
+      topicTree = JSON.parse(content);
+    } catch (parseError) {
+      console.error('Failed to parse AI response:', content);
+      throw new Error('Azure OpenAI returned invalid JSON format');
+    }
+
+    // Validate topic tree structure
+    if (!topicTree.company || !Array.isArray(topicTree.topics)) {
+      console.error('Invalid topic tree structure:', topicTree);
+      throw new Error('Topic tree has invalid structure');
+    }
+
+    if (topicTree.topics.length === 0) {
+      throw new Error('No topics generated. Please provide more detailed company information.');
+    }
 
     // Store in database
     const now = new Date();
@@ -142,8 +159,18 @@ Generate a comprehensive topic tree for capturing this organization's knowledge.
     });
   } catch (error) {
     console.error('Error generating topic tree:', error);
+
+    // Provide detailed error messages
+    let errorMessage = 'Failed to generate topic tree';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+
     return NextResponse.json(
-      { error: 'Failed to generate topic tree' },
+      {
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? error : undefined,
+      },
       { status: 500 }
     );
   }

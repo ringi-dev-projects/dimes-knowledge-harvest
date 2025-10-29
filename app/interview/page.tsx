@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
+import { useCompany } from '@/lib/context/CompanyContext';
 
 export default function InterviewPage() {
   const [isRecording, setIsRecording] = useState(false);
@@ -9,10 +10,17 @@ export default function InterviewPage() {
   const [error, setError] = useState('');
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { companyId, companyName } = useCompany();
 
   const startInterview = async () => {
     try {
       setError('');
+
+      // Check if company is selected
+      if (!companyId) {
+        setError('Please generate a topic tree first from the Seed page');
+        return;
+      }
 
       // Get user media
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -24,7 +32,7 @@ export default function InterviewPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          companyId: 1, // TODO: Get from context or URL param
+          companyId,
         }),
       });
 
@@ -110,8 +118,18 @@ export default function InterviewPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Knowledge Interview</h1>
         <p className="mt-2 text-gray-600">
-          Conduct a voice-first interview to capture expert knowledge
+          {companyName ? `${companyName} - ` : ''}Conduct a voice-first interview to capture expert knowledge
         </p>
+        {companyId && (
+          <p className="mt-1 text-sm text-green-600">
+            ✓ Company selected (ID: {companyId})
+          </p>
+        )}
+        {!companyId && (
+          <p className="mt-1 text-sm text-amber-600">
+            ⚠ No company selected. Please generate a topic tree first.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

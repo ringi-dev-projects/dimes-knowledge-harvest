@@ -4,22 +4,52 @@ import * as schema from './schema';
 import path from 'path';
 import fs from 'fs';
 
-// Ensure data directory exists
-const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
+let sqliteInstance: Database.Database | null = null;
+
+function initializeDb() {
+  if (dbInstance) {
+    return dbInstance;
+  }
+
+  try {
+    // Ensure data directory exists
+    const dataDir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    const dbPath = process.env.DATABASE_URL || path.join(dataDir, 'knowledge-harvest.db');
+
+    // Create SQLite connection
+    sqliteInstance = new Database(dbPath);
+    sqliteInstance.pragma('journal_mode = WAL');
+
+    // Create Drizzle instance
+    dbInstance = drizzle(sqliteInstance, { schema });
+
+    // Initialize tables
+    initTables();
+
+    console.log('Database initialized successfully at:', dbPath);
+
+    return dbInstance;
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    throw new Error('Database initialization failed');
+  }
 }
 
-const dbPath = process.env.DATABASE_URL || path.join(dataDir, 'knowledge-harvest.db');
-const sqlite = new Database(dbPath);
-sqlite.pragma('journal_mode = WAL');
-
-export const db = drizzle(sqlite, { schema });
+export const db = initializeDb();
 
 // Initialize database tables
-export function initDb() {
+function initTables() {
+  if (!sqliteInstance) {
+    throw new Error('SQLite instance not initialized');
+  }
+
   // Create tables if they don't exist
-  sqlite.exec(`
+  sqliteInstance.exec(`
     CREATE TABLE IF NOT EXISTS companies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -96,7 +126,16 @@ export function initDb() {
       FOREIGN KEY (company_id) REFERENCES companies(id)
     );
   `);
+
+  console.log('Database tables initialized');
 }
 
-// Initialize on import
-initDb();
+// Export function to safely close database connection
+export function closeDb() {
+  if (sqliteInstance) {
+    sqliteInstance.close();
+    sqliteInstance = null;
+    dbInstance = null;
+    console.log('Database connection closed');
+  }
+}
