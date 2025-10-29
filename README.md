@@ -31,6 +31,9 @@ AI-powered platform to convert senior employees' tacit know-how into searchable,
 1. Clone and install dependencies:
 ```bash
 npm install
+
+# If you encounter better-sqlite3 errors, rebuild it:
+npm rebuild better-sqlite3
 ```
 
 2. Configure environment variables:
