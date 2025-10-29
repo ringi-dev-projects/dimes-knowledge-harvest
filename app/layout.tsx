@@ -1,6 +1,20 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { CompanyProvider } from "@/lib/context/CompanyContext";
+
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+});
+
+const navigation = [
+  { name: "Home", href: "/" },
+  { name: "Seed Topics", href: "/seed" },
+  { name: "Interview", href: "/interview" },
+  { name: "Dashboard", href: "/dashboard" },
+];
 
 export const metadata: Metadata = {
   title: "Knowledge Harvest - Capture Tacit Knowledge",
@@ -14,46 +28,44 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">
+      <body className={`${inter.className} antialiased`}>
         <CompanyProvider>
-          <nav className="border-b border-gray-200 bg-white">
-            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-              <div className="flex h-16 justify-between">
-                <div className="flex">
-                  <div className="flex flex-shrink-0 items-center">
-                    <h1 className="text-xl font-bold text-gray-900">Knowledge Harvest</h1>
-                  </div>
-                  <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-                    <a
-                      href="/"
-                      className="inline-flex items-center border-b-2 border-transparent px-1 pt-1 text-sm font-medium text-gray-900 hover:border-gray-300"
-                    >
-                      Home
-                    </a>
-                    <a
-                      href="/seed"
-                      className="inline-flex items-center border-b-2 border-transparent px-1 pt-1 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700"
-                    >
-                      Seed Topics
-                    </a>
-                    <a
-                      href="/interview"
-                      className="inline-flex items-center border-b-2 border-transparent px-1 pt-1 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700"
-                    >
-                      Interview
-                    </a>
-                    <a
-                      href="/dashboard"
-                      className="inline-flex items-center border-b-2 border-transparent px-1 pt-1 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700"
-                    >
-                      Dashboard
-                    </a>
-                  </div>
+          <nav className="sticky top-0 z-40 border-b border-white/60 bg-white/75 shadow-sm ring-1 ring-slate-900/5 backdrop-blur supports-[backdrop-filter]:bg-white/55">
+            <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+              <Link href="/" className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30">
+                  KH
                 </div>
+                <div className="flex flex-col">
+                  <span className="text-base font-semibold text-slate-900 sm:text-lg">Knowledge Harvest</span>
+                  <span className="hidden text-xs text-slate-500 sm:block">
+                    Capture and scale expert know-how
+                  </span>
+                </div>
+              </Link>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1 overflow-x-auto rounded-full border border-white/60 bg-white/80 p-1 text-xs font-medium text-slate-600 backdrop-blur sm:text-sm md:gap-1.5">
+                  {navigation.map((item) => (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className="rounded-full px-4 py-1.5 transition hover:bg-indigo-50 hover:text-indigo-600"
+                    >
+                      {item.name}
+                    </Link>
+                  ))}
+                </div>
+                <Link
+                  href="/seed"
+                  className="btn-primary hidden sm:inline-flex"
+                >
+                  Get Started
+                </Link>
               </div>
             </div>
           </nav>
-          <main>{children}</main>
+          <main className="relative z-0 pb-16 sm:pb-20">{children}</main>
         </CompanyProvider>
       </body>
     </html>
