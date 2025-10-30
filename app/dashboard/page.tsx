@@ -65,7 +65,9 @@ export default function DashboardPage() {
   const [useMockData, setUseMockData] = useState(false);
   const [interviews, setInterviews] = useState<InterviewSummary[]>([]);
   const [interviewsLoading, setInterviewsLoading] = useState(true);
-  const { companyId, companyName } = useCompany();
+  const [resetting, setResetting] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const { companyId, companyName, setCompanyId, setCompanyName } = useCompany();
   const { dictionary, locale } = useLocale();
   const tDash = dictionary.dashboard;
   const tCommon = dictionary.common;
@@ -73,6 +75,7 @@ export default function DashboardPage() {
   const coverageText = tDash.coverageSection;
   const interviewsText = tDash.interviewsSection;
   const cardText = tDash.cards;
+  const adminText = tDash.admin;
 
   const loadData = useCallback(async () => {
     if (!companyId && !useMockData) {
@@ -152,6 +155,43 @@ export default function DashboardPage() {
   const docsLabel = !companyId && !useMockData ? tDash.hero.docsDisabled : tDash.hero.docsEnabled;
   const docsButtonClass = !companyId && !useMockData ? 'btn-secondary' : 'btn-primary';
   const recentInterviews = useMockData ? MOCK_INTERVIEWS : interviews;
+
+  const handleReset = useCallback(async () => {
+    if (!window.confirm(adminText.confirm)) {
+      return;
+    }
+
+    setResetFeedback(null);
+    setResetting(true);
+
+    try {
+      const response = await fetch('/api/admin/reset', { method: 'POST' });
+      if (!response.ok) {
+        let errorMessage = adminText.error;
+        try {
+          const payload = await response.json();
+          if (payload?.error) {
+            errorMessage = payload.error;
+          }
+        } catch (error) {
+          // ignore parse errors and use default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      setCompanyId(null);
+      setCompanyName(null);
+      setMetrics([]);
+      setInterviews([]);
+      setUseMockData(false);
+      setResetFeedback({ type: 'success', message: adminText.success });
+    } catch (error) {
+      console.error('Reset data error:', error);
+      setResetFeedback({ type: 'error', message: adminText.error });
+    } finally {
+      setResetting(false);
+    }
+  }, [adminText, setCompanyId, setCompanyName]);
 
   return (
     <div className="page-shell space-y-10">
@@ -329,6 +369,34 @@ export default function DashboardPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="section-surface p-6 sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{adminText.title}</h2>
+            <p className="text-sm text-slate-500">{adminText.description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleReset}
+            disabled={resetting}
+            className={`btn-danger ${resetting ? 'opacity-80' : ''}`}
+          >
+            {resetting ? adminText.buttonBusy : adminText.button}
+          </button>
+        </div>
+        {resetFeedback ? (
+          <div
+            className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+              resetFeedback.type === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-rose-200 bg-rose-50 text-rose-600'
+            }`}
+          >
+            {resetFeedback.message}
+          </div>
+        ) : null}
       </section>
     </div>
   );

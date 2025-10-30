@@ -158,6 +158,15 @@ const en = {
       audioBadge: 'Audio archived',
       docLink: 'View documentation',
     },
+    admin: {
+      title: 'Maintenance',
+      description: 'Delete all companies, interviews, and stored audio for a clean slate.',
+      button: 'Reset data',
+      buttonBusy: 'Resetting…',
+      confirm: 'This will permanently delete every record and audio file. Continue?',
+      success: 'All data has been cleared.',
+      error: 'Reset failed. Please try again.',
+    },
     cards: {
       defaultSpeaker: 'Expert contributor',
       metrics: {
@@ -485,6 +494,15 @@ const ja: typeof en = {
       secondaryCta: 'トピックをシード',
       audioBadge: '音声を保存',
       docLink: 'ドキュメントを表示',
+    },
+    admin: {
+      title: 'メンテナンス',
+      description: 'すべての企業・インタビュー・保存音声を削除して環境を初期化します。',
+      button: 'データをリセット',
+      buttonBusy: 'リセット中…',
+      confirm: 'データベースと音声ファイルが完全に削除されます。続行しますか？',
+      success: 'すべてのデータを削除しました。',
+      error: 'リセットに失敗しました。もう一度お試しください。',
     },
     cards: {
       defaultSpeaker: '担当エキスパート',

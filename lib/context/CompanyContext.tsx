@@ -4,9 +4,9 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 
 interface CompanyContextType {
   companyId: number | null;
-  setCompanyId: (id: number) => void;
+  setCompanyId: (id: number | null) => void;
   companyName: string | null;
-  setCompanyName: (name: string) => void;
+  setCompanyName: (name: string | null) => void;
 }
 
 const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
@@ -32,14 +32,22 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Wrapper functions that also save to localStorage
-  const setCompanyId = (id: number) => {
+  const setCompanyId = (id: number | null) => {
     setCompanyIdState(id);
-    localStorage.setItem('companyId', id.toString());
+    if (id === null) {
+      localStorage.removeItem('companyId');
+    } else {
+      localStorage.setItem('companyId', id.toString());
+    }
   };
 
-  const setCompanyName = (name: string) => {
+  const setCompanyName = (name: string | null) => {
     setCompanyNameState(name);
-    localStorage.setItem('companyName', name);
+    if (name === null) {
+      localStorage.removeItem('companyName');
+    } else {
+      localStorage.setItem('companyName', name);
+    }
   };
 
   return (
