@@ -1,6 +1,248 @@
 export type Locale = 'ja' | 'en';
 
-const en = {
+type NavigationKey = 'home' | 'seed' | 'interview' | 'dashboard';
+
+type Dictionary = {
+  common: {
+    navigation: Record<NavigationKey, string> & { getStarted: string };
+    languageName: Record<Locale, string>;
+    brand: { name: string; tagline: string; credit: string };
+    duration: {
+      placeholder: string;
+      formatFull: string;
+      formatMinutes: string;
+      formatSeconds: string;
+    };
+    time: {
+      momentsAgo: string;
+    };
+    statuses: {
+      completed: string;
+      active: string;
+      failed: string;
+      default: string;
+    };
+  };
+  home: {
+    hero: {
+      badge: string;
+      title: string;
+      subtitle: string;
+      primaryCta: string;
+      secondaryCta: string;
+      stats: Array<{ label: string; value: string; description: string }>;
+    };
+    features: Array<{ title: string; description: string }>;
+    howItWorks: {
+      badge: string;
+      title: string;
+      description: string;
+      steps: string[];
+      snapshot: {
+        title: string;
+        description: string;
+        topics: Array<{ name: string; value: string }>;
+      };
+      queue: {
+        title: string;
+        items: string[];
+      };
+    };
+  };
+  dashboard: {
+    hero: {
+      badge: string;
+      title: string;
+      description: string;
+      toggleMockOn: string;
+      toggleMockOff: string;
+      docsEnabled: string;
+      docsDisabled: string;
+    };
+    metrics: {
+      coverage: { title: string; subtitle: string };
+      confidence: { title: string; subtitle: string };
+      topics: { title: string; summary: string; suffix: string };
+      interviewSessions: { title: string; empty: string; nonEmpty: string };
+    };
+    coverageSection: {
+      title: string;
+      subtitle: string;
+      loading: string;
+      emptyTitle: string;
+      emptySubtitle: string;
+      seedCta: string;
+      mockCta: string;
+    };
+    interviewsSection: {
+      title: string;
+      subtitle: string;
+      startCta: string;
+      loading: string;
+      emptyTitle: string;
+      emptySubtitle: string;
+      primaryCta: string;
+      secondaryCta: string;
+      audioBadge: string;
+      docLink: string;
+    };
+    cards: {
+      defaultSpeaker: string;
+      metrics: {
+        duration: string;
+        knowledge: string;
+        messages: string;
+      };
+      coverage: {
+        answeredTemplate: string;
+        coverageLabel: string;
+        confidenceLabel: string;
+        nextQuestions: string;
+      };
+    };
+    admin: {
+      title: string;
+      description: string;
+      button: string;
+      buttonBusy: string;
+      confirm: string;
+      success: string;
+      error: string;
+    };
+  };
+  seed: {
+    title: string;
+    subtitle: string;
+    dashboardLink: string;
+    assistantLabel: string;
+    assistant: {
+      placeholderActive: string;
+      placeholderComplete: string;
+      mappingIndicator: string;
+      send: string;
+      errorRequired: string;
+      skipTag: string;
+      completeHint: string;
+      intros: {
+        new: string;
+        extend: string;
+        extendFallback: string;
+      };
+      prompts: {
+        companyName: string;
+        companyUrl: string;
+        focusNew: string;
+        focusExtend: string;
+        descriptionNew: string;
+        descriptionExtend: string;
+      };
+      mappingCue: string;
+      success: string;
+      failure: string;
+    };
+    focusSuggestions: string[];
+    panels: {
+      currentTitle: string;
+      extend: string;
+      newCompany: string;
+      promptsReady: string;
+      reminder: string;
+      firstTimeTitle: string;
+      firstTimeDescription: string;
+      examplesTitle: string;
+      examples: string[];
+      tipsTitle: string;
+      tips: string[];
+    };
+    topicPreview: {
+      weightLabel: string;
+      followUps: string;
+    };
+    results: {
+      badge: string;
+      title: string;
+      companyLabel: string;
+      startInterview: string;
+      viewDashboard: string;
+    };
+  };
+  interview: {
+    hero: {
+      badge: string;
+      title: string;
+      description: string;
+      descriptionWithCompany: string;
+      companyReady: string;
+      companyMissing: string;
+      sessionLabel: string;
+    };
+    status: {
+      connecting: string;
+      active: string;
+      ended: string;
+      idle: string;
+    };
+    connection: {
+      recording: string;
+      connecting: string;
+      ready: string;
+      dropped: string;
+    };
+    buttons: {
+      stop: string;
+      stopPending: string;
+      start: string;
+      startPending: string;
+    };
+    errors: {
+      missingCompany: string;
+      session: string;
+      startFailed: string;
+      persistFailed: string;
+      realtimeCredentials: string;
+      realtimeOfferRejected: string;
+    };
+    transcript: {
+      title: string;
+      assistantLabel: string;
+      userLabel: string;
+      empty: string;
+    };
+    postSession: {
+      title: string;
+      description: string;
+      dashboard: string;
+      docs: string;
+      restart: string;
+      tip: string;
+    };
+    coverage: {
+      title: string;
+      subtitle: string;
+      syncing: string;
+      empty: string;
+      suggestedTitle: string;
+      suggestedEmpty: string;
+      suggestedItemPrefix: string;
+      suggestedItemSuffix: string;
+      metricLabel: string;
+    };
+    speaker: {
+      liveActivity: string;
+      assistant: string;
+      user: string;
+      speaking: string;
+    };
+    ai: {
+      instructions: string;
+    };
+    defaults: {
+      topics: Array<{ id: string; name: string }>;
+    };
+  };
+};
+
+const en: Dictionary = {
   common: {
     navigation: {
       home: 'Home',
@@ -335,9 +577,9 @@ const en = {
       ],
     },
   },
-} as const;
+};
 
-const ja: typeof en = {
+const ja: Dictionary = {
   common: {
     navigation: {
       home: 'ホーム',
@@ -671,9 +913,9 @@ const ja: typeof en = {
       ],
     },
   },
-} as const;
+};
 
-export type Dictionary = typeof en;
+export type { Dictionary };
 
 export const dictionaries: Record<Locale, Dictionary> = {
   en,
