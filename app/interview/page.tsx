@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InterviewMessage } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
+import { useLocale } from '@/lib/context/LocaleContext';
+import type { Dictionary } from '@/lib/i18n/dictionaries';
 
 type SessionStatus = 'idle' | 'connecting' | 'active' | 'ended';
 
@@ -36,9 +38,6 @@ interface TopicNode {
 }
 
 const TRANSCRIPTION_MODEL = 'whisper-1';
-const TRANSCRIPTION_LANGUAGE = 'en';
-const DEFAULT_INSTRUCTIONS =
-  'You are a helpful interviewer focused on capturing operational knowledge with open-ended, respectful questions.';
 
 const SPEAKER_THRESHOLD = 0.05;
 const SPEAKER_DECAY_MS = 1200;
@@ -73,6 +72,12 @@ const TOOL_DEFINITIONS = [
 
 export default function InterviewPage() {
   const { companyId, companyName } = useCompany();
+  const { dictionary, locale } = useLocale();
+  const tInterview = dictionary.interview;
+
+  const transcriptionLanguage = locale === 'ja' ? 'ja' : 'en';
+  const instructionsFallback = tInterview.ai.instructions;
+  const defaultCoverageTopics = tInterview.defaults.topics;
 
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [isRecording, setIsRecording] = useState(false);
@@ -98,7 +103,7 @@ export default function InterviewPage() {
   const userItemsByIdRef = useRef<Map<string, number>>(new Map());
   const sessionConfigRef = useRef<{ voice: string; instructions: string }>({
     voice: 'verse',
-    instructions: DEFAULT_INSTRUCTIONS,
+    instructions: instructionsFallback,
   });
   const audioRef = useRef<HTMLAudioElement>(null);
   const transcriptContainerRef = useRef<HTMLDivElement>(null);
@@ -179,27 +184,29 @@ export default function InterviewPage() {
       }
 
       if (initialCoverage.length === 0) {
-        initialCoverage = [
-          { topicId: 'products_services', topicName: 'Products & Services', coverage: 0, confidence: 0 },
-          { topicId: 'processes', topicName: 'Processes', coverage: 0, confidence: 0 },
-          { topicId: 'equipment', topicName: 'Equipment', coverage: 0, confidence: 0 },
-          { topicId: 'safety', topicName: 'Safety', coverage: 0, confidence: 0 },
-        ];
+        initialCoverage = defaultCoverageTopics.map((topic) => ({
+          topicId: topic.id,
+          topicName: topic.name,
+          coverage: 0,
+          confidence: 0,
+        }));
       }
 
       setCoverageProgress(initialCoverage);
     } catch (error) {
       console.error('Failed to load topic context:', error);
-      setCoverageProgress([
-        { topicId: 'products_services', topicName: 'Products & Services', coverage: 0, confidence: 0 },
-        { topicId: 'processes', topicName: 'Processes', coverage: 0, confidence: 0 },
-        { topicId: 'equipment', topicName: 'Equipment', coverage: 0, confidence: 0 },
-        { topicId: 'safety', topicName: 'Safety', coverage: 0, confidence: 0 },
-      ]);
+      setCoverageProgress(
+        defaultCoverageTopics.map((topic) => ({
+          topicId: topic.id,
+          topicName: topic.name,
+          coverage: 0,
+          confidence: 0,
+        }))
+      );
     } finally {
       setCoverageLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, defaultCoverageTopics]);
 
   useEffect(() => {
     if (companyId) {
@@ -367,10 +374,10 @@ export default function InterviewPage() {
       session: {
         modalities: ['text', 'audio'],
         voice: meta?.voice ?? 'verse',
-        instructions: meta?.instructions ?? DEFAULT_INSTRUCTIONS,
+        instructions: meta?.instructions ?? instructionsFallback,
         input_audio_transcription: {
           model: TRANSCRIPTION_MODEL,
-          language: TRANSCRIPTION_LANGUAGE,
+          language: transcriptionLanguage,
         },
         turn_detection: {
           type: 'server_vad',
@@ -386,7 +393,7 @@ export default function InterviewPage() {
     };
 
     channel.send(JSON.stringify(payload));
-  }, []);
+  }, [instructionsFallback, transcriptionLanguage]);
 
   const handleFunctionCall = useCallback(
     (callId: string, buffer: { name?: string; args: string }) => {
@@ -530,7 +537,7 @@ export default function InterviewPage() {
             setStatus('active');
             return;
           case 'session.error': {
-            const message = payload?.error?.message || 'The realtime session reported an error. Please try again.';
+            const message = payload?.error?.message || tInterview.errors.session;
             setError(message);
             return;
           }
@@ -719,7 +726,7 @@ export default function InterviewPage() {
         console.error('Failed to process realtime event:', err, event.data);
       }
     },
-    [appendMessage, handleFunctionCall, markActiveSpeaker, updateMessageAt]
+    [appendMessage, handleFunctionCall, markActiveSpeaker, tInterview, updateMessageAt]
   );
 
   const cleanupConnection = useCallback(() => {
@@ -813,6 +820,8 @@ export default function InterviewPage() {
       formData.append('audio', audioBlob, `session-${sessionIdRef.current}.webm`);
     }
 
+    formData.append('locale', locale);
+
     const response = await fetch('/api/interview/end', {
       method: 'POST',
       body: formData,
@@ -820,11 +829,11 @@ export default function InterviewPage() {
 
     if (!response.ok) {
       const payload = await safeParseJson(response);
-      throw new Error(payload?.error || 'Failed to save interview session');
+      throw new Error(payload?.error || tInterview.errors.persistFailed);
     }
 
     return true;
-  }, []);
+  }, [locale, tInterview.errors.persistFailed]);
 
   const resetInterviewState = useCallback(() => {
     if (activeSpeakerTimeoutRef.current) {
@@ -863,7 +872,7 @@ export default function InterviewPage() {
     }
 
     if (!companyId) {
-      setError('Please generate a topic tree first from the Seed page');
+      setError(tInterview.errors.missingCompany);
       return;
     }
 
@@ -906,24 +915,24 @@ export default function InterviewPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ companyId }),
+        body: JSON.stringify({ companyId, locale }),
       });
 
       if (!response.ok) {
         const payload = await safeParseJson(response);
-        throw new Error(payload?.error || 'Failed to create realtime session');
+        throw new Error(payload?.error || tInterview.errors.startFailed);
       }
 
       const data = (await response.json()) as RealtimeSessionPayload;
       if (!data?.clientSecret || !data.webrtcUrl) {
-        throw new Error('Realtime session is missing connection credentials');
+        throw new Error(tInterview.errors.realtimeCredentials);
       }
 
       setSessionId(data.sessionId);
       sessionIdRef.current = data.sessionId;
       sessionConfigRef.current = {
         voice: data.voice ?? 'verse',
-        instructions: data.instructions ?? DEFAULT_INSTRUCTIONS,
+        instructions: data.instructions ?? instructionsFallback,
       };
 
       const peerConnection = new RTCPeerConnection();
@@ -950,7 +959,7 @@ export default function InterviewPage() {
           }
         }
         if (peerConnection.connectionState === 'failed') {
-          setError('The realtime connection dropped. Please try restarting the interview.');
+          setError(tInterview.connection.dropped);
         }
       };
 
@@ -976,9 +985,7 @@ export default function InterviewPage() {
 
       if (!sdpResponse.ok) {
         const text = await sdpResponse.text();
-        throw new Error(
-          text || 'Azure Realtime service rejected the WebRTC offer. Check model deployment.'
-        );
+        throw new Error(text || tInterview.errors.realtimeOfferRejected);
       }
 
       const answer = await sdpResponse.text();
@@ -987,12 +994,12 @@ export default function InterviewPage() {
       setIsConnecting(false);
     } catch (err) {
       console.error('Interview start error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start interview');
+      setError(err instanceof Error ? err.message : tInterview.errors.startFailed);
       setIsConnecting(false);
       setStatus('idle');
       cleanupConnection();
     }
-  }, [cleanupConnection, companyId, handleServerEvent, isConnecting, isRecording, loadTopicContext, sendSessionBootstrap, setupAnalyserForStream]);
+  }, [cleanupConnection, companyId, handleServerEvent, instructionsFallback, isConnecting, isRecording, loadTopicContext, locale, sendSessionBootstrap, setupAnalyserForStream, tInterview]);
 
   const stopInterview = useCallback(async () => {
     if (!sessionIdRef.current) {
@@ -1017,14 +1024,14 @@ export default function InterviewPage() {
       }
     } catch (err) {
       console.error('Failed to save interview session:', err);
-      setError(err instanceof Error ? err.message : 'Failed to save interview session');
+      setError(err instanceof Error ? err.message : tInterview.errors.persistFailed);
     } finally {
       cleanupConnection();
       sessionIdRef.current = null;
       setSessionId(null);
       setStopPending(false);
     }
-  }, [cleanupConnection, companyId, finalizeRecording, persistSession]);
+  }, [cleanupConnection, companyId, finalizeRecording, persistSession, tInterview.errors.persistFailed]);
 
   useEffect(() => {
     return () => {
@@ -1047,18 +1054,11 @@ export default function InterviewPage() {
     };
   }, []);
 
-  const statusLabel = useMemo(() => {
-    switch (status) {
-      case 'connecting':
-        return 'Connecting';
-      case 'active':
-        return 'Live';
-      case 'ended':
-        return 'Saved';
-      default:
-        return 'Idle';
-    }
-  }, [status]);
+  const statusLabel = tInterview.status[status];
+
+  const heroDescription = companyName
+    ? formatTemplate(tInterview.hero.descriptionWithCompany, { company: companyName })
+    : tInterview.hero.description;
 
   const prioritizedTopics = useMemo(() => {
     if (!coverageProgress || coverageProgress.length === 0) {
@@ -1073,28 +1073,25 @@ export default function InterviewPage() {
     <div className="page-shell space-y-10">
       <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
         <div className="flex flex-col gap-4">
-          <span className="badge-soft">Interview studio</span>
-          <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">Knowledge interview</h1>
-          <p className="text-sm leading-relaxed text-slate-600 sm:text-base">
-            {companyName ? `${companyName} - ` : ''}Run a voice-first interview that adapts on the fly,
-            captures transcripts, and feeds straight into coverage analytics.
-          </p>
+          <span className="badge-soft">{tInterview.hero.badge}</span>
+          <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">{tInterview.hero.title}</h1>
+          <p className="text-sm leading-relaxed text-slate-600 sm:text-base">{heroDescription}</p>
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge label={statusLabel} status={status} />
             {companyId ? (
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-sm font-semibold text-emerald-700">
                 <span aria-hidden="true">✓</span>
-                Company ready (ID: {companyId})
+                {formatTemplate(tInterview.hero.companyReady, { id: String(companyId) })}
               </span>
             ) : (
               <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-1.5 text-sm font-semibold text-amber-700">
                 <span aria-hidden="true">!</span>
-                Generate a topic tree to activate interviews
+                {tInterview.hero.companyMissing}
               </span>
             )}
             {sessionId && (
               <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-semibold text-slate-500">
-                Session #{sessionId}
+                {formatTemplate(tInterview.hero.sessionLabel, { id: String(sessionId) })}
               </span>
             )}
           </div>
@@ -1108,17 +1105,17 @@ export default function InterviewPage() {
               {isRecording ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-600">
                   <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
-                  Recording
+                  {tInterview.connection.recording}
                 </div>
               ) : isConnecting ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-600">
                   <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400" />
-                  Connecting...
+                  {tInterview.connection.connecting}
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-600">
                   <span className="h-2 w-2 rounded-full bg-slate-300" />
-                  Ready to start
+                  {tInterview.connection.ready}
                 </div>
               )}
             </div>
@@ -1131,10 +1128,10 @@ export default function InterviewPage() {
               >
                 {stopPending ? (
                   <span className="flex items-center gap-2">
-                    <Spinner /> Stopping…
+                    <Spinner /> {tInterview.buttons.stopPending}
                   </span>
                 ) : (
-                  'Stop interview'
+                  tInterview.buttons.stop
                 )}
               </button>
             ) : (
@@ -1145,7 +1142,7 @@ export default function InterviewPage() {
               >
                 {isConnecting ? (
                   <span className="flex items-center gap-2">
-                    <Spinner /> Starting…
+                    <Spinner /> {tInterview.buttons.startPending}
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">
@@ -1156,14 +1153,14 @@ export default function InterviewPage() {
                         d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
                       />
                     </svg>
-                    Start interview
+                    {tInterview.buttons.start}
                   </span>
                 )}
               </button>
             )}
           </div>
 
-          <SpeakerIndicator activeSpeaker={activeSpeaker} levels={speakerLevels} />
+          <SpeakerIndicator activeSpeaker={activeSpeaker} levels={speakerLevels} labels={tInterview.speaker} />
 
           {error && (
             <div className="mb-6 rounded-2xl border border-red-200 bg-red-50/80 p-4 text-sm font-medium text-red-700">
@@ -1172,7 +1169,7 @@ export default function InterviewPage() {
           )}
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">Live transcript</h2>
+            <h2 className="mb-3 text-sm font-semibold text-slate-700">{tInterview.transcript.title}</h2>
             <div
               ref={transcriptContainerRef}
               className="space-y-4 overflow-y-auto pr-1"
@@ -1187,7 +1184,7 @@ export default function InterviewPage() {
                       d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
                     />
                   </svg>
-                  <p className="text-sm">Click &quot;Start interview&quot; to begin capturing responses.</p>
+                  <p className="text-sm">{tInterview.transcript.empty}</p>
                 </div>
               ) : (
                 messages.map((msg, idx) => (
@@ -1203,7 +1200,7 @@ export default function InterviewPage() {
                       }`}
                     >
                       <p className="text-xs font-semibold uppercase tracking-wide">
-                        {msg.role === 'assistant' ? 'AI interviewer' : 'You'}
+                        {msg.role === 'assistant' ? tInterview.transcript.assistantLabel : tInterview.transcript.userLabel}
                       </p>
                       <p className="mt-1 text-sm leading-relaxed">{msg.content}</p>
                     </div>
@@ -1217,42 +1214,40 @@ export default function InterviewPage() {
 
           {postSessionInfo && (
             <div className="mt-6 rounded-2xl border border-white/60 bg-white/95 p-6 shadow-lg ring-1 ring-slate-900/10 backdrop-blur">
-              <h3 className="text-lg font-semibold text-slate-900">Interview saved</h3>
-              <p className="mt-2 text-sm text-slate-600">
-                We captured the transcript, audio, and updated coverage metrics. What would you like to do next?
-              </p>
+              <h3 className="text-lg font-semibold text-slate-900">{tInterview.postSession.title}</h3>
+              <p className="mt-2 text-sm text-slate-600">{tInterview.postSession.description}</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Link href="/dashboard" className="btn-secondary">
-                  View Dashboard
+                  {tInterview.postSession.dashboard}
                 </Link>
                 {postSessionInfo.companyId ? (
                   <Link href={`/docs/${postSessionInfo.companyId}`} className="btn-secondary">
-                    View Documentation
+                    {tInterview.postSession.docs}
                   </Link>
                 ) : null}
                 <button onClick={resetInterviewState} className="btn-primary">
-                  Start Another Interview
+                  {tInterview.postSession.restart}
                 </button>
               </div>
               <p className="mt-3 text-xs text-slate-500">
-                Tip: You can revisit any session later from the dashboard&rsquo;s interview history.
+                {tInterview.postSession.tip}
               </p>
             </div>
           )}
         </section>
 
         <aside className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
-          <h2 className="text-lg font-semibold text-slate-900">Coverage progress</h2>
-          <p className="mt-1 text-sm text-slate-500">Track how the conversation is filling your priority areas.</p>
+          <h2 className="text-lg font-semibold text-slate-900">{tInterview.coverage.title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{tInterview.coverage.subtitle}</p>
 
           <div className="mt-6 space-y-5">
             {coverageLoading ? (
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
                 <div className="h-2 w-2 animate-ping rounded-full bg-indigo-400" />
-                <span>Syncing coverage from recent sessions…</span>
+                <span>{tInterview.coverage.syncing}</span>
               </div>
             ) : coverageProgress.length === 0 ? (
-              <p className="text-sm text-slate-500">Coverage will populate as soon as the first topic is captured.</p>
+              <p className="text-sm text-slate-500">{tInterview.coverage.empty}</p>
             ) : (
               coverageProgress.slice(0, 6).map((entry) => (
                 <TopicProgress
@@ -1260,21 +1255,26 @@ export default function InterviewPage() {
                   name={entry.topicName}
                   coverage={Math.round(entry.coverage)}
                   confidence={Math.round(entry.confidence)}
+                  metricLabel={tInterview.coverage.metricLabel}
                 />
               ))
             )}
           </div>
 
           <div className="mt-8 rounded-2xl border border-slate-200/70 bg-slate-50/70 p-5">
-            <h3 className="text-sm font-semibold text-slate-700">Suggested follow-ups</h3>
+            <h3 className="text-sm font-semibold text-slate-700">{tInterview.coverage.suggestedTitle}</h3>
             <ul className="mt-3 space-y-2 text-sm text-slate-600">
               {prioritizedTopics.length === 0 ? (
-                <li>Focus on capturing foundational knowledge for your highest priority topics.</li>
+                <li>{tInterview.coverage.suggestedEmpty}</li>
               ) : (
                 prioritizedTopics.map((topic) => (
                   <li key={topic.topicId}>
-                    • Explore more about <span className="font-medium text-slate-700">{topic.topicName}</span>&nbsp;
-                    (currently {Math.round(topic.coverage)}% coverage, {Math.round(topic.confidence)}% confidence)
+                    • {tInterview.coverage.suggestedItemPrefix}{' '}
+                    <span className="font-medium text-slate-700">{topic.topicName}</span>{' '}
+                    {formatTemplate(tInterview.coverage.suggestedItemSuffix, {
+                      coverage: String(Math.round(topic.coverage)),
+                      confidence: String(Math.round(topic.confidence)),
+                    })}
                   </li>
                 ))
               )}
@@ -1311,7 +1311,7 @@ function Spinner() {
   );
 }
 
-function TopicProgress({ name, coverage, confidence }: { name: string; coverage: number; confidence: number }) {
+function TopicProgress({ name, coverage, confidence, metricLabel }: { name: string; coverage: number; confidence: number; metricLabel: string }) {
   const safeCoverage = Math.max(0, Math.min(100, coverage));
   const safeConfidence = Math.max(0, Math.min(100, confidence));
   return (
@@ -1327,23 +1327,43 @@ function TopicProgress({ name, coverage, confidence }: { name: string; coverage:
         />
       </div>
       <div className="text-xs text-slate-400">
-        Confidence: <span className="font-semibold text-slate-600">{Math.round(safeConfidence)}%</span>
+        {metricLabel}: <span className="font-semibold text-slate-600">{Math.round(safeConfidence)}%</span>
       </div>
     </div>
   );
 }
 
-function SpeakerIndicator({ activeSpeaker, levels }: { activeSpeaker: 'assistant' | 'user' | null; levels: { user: number; assistant: number } }) {
+function SpeakerIndicator({
+  activeSpeaker,
+  levels,
+  labels,
+}: {
+  activeSpeaker: 'assistant' | 'user' | null;
+  levels: { user: number; assistant: number };
+  labels: Dictionary['interview']['speaker'];
+}) {
   return (
     <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm text-slate-600 shadow-sm">
-      <span className="font-semibold text-slate-500">Live activity</span>
-      <SpeakerPill label="You" isActive={activeSpeaker === 'user'} accent="user" level={levels.user} />
-      <SpeakerPill label="AI interviewer" isActive={activeSpeaker === 'assistant'} accent="assistant" level={levels.assistant} />
+      <span className="font-semibold text-slate-500">{labels.liveActivity}</span>
+      <SpeakerPill label={labels.user} isActive={activeSpeaker === 'user'} accent="user" level={levels.user} speakingLabel={labels.speaking} />
+      <SpeakerPill label={labels.assistant} isActive={activeSpeaker === 'assistant'} accent="assistant" level={levels.assistant} speakingLabel={labels.speaking} />
     </div>
   );
 }
 
-function SpeakerPill({ label, isActive, accent, level }: { label: string; isActive: boolean; accent: 'assistant' | 'user'; level: number }) {
+function SpeakerPill({
+  label,
+  isActive,
+  accent,
+  level,
+  speakingLabel,
+}: {
+  label: string;
+  isActive: boolean;
+  accent: 'assistant' | 'user';
+  level: number;
+  speakingLabel: string;
+}) {
   const activeClasses =
     accent === 'assistant'
       ? 'bg-indigo-500/90 text-white shadow-lg shadow-indigo-500/30'
@@ -1369,7 +1389,7 @@ function SpeakerPill({ label, isActive, accent, level }: { label: string; isActi
         {label}
       </span>
       <LevelBars isActive={isActive} accent={accent} level={level} />
-      {isActive ? <span className="text-xs uppercase tracking-wide">Speaking</span> : null}
+      {isActive ? <span className="text-xs uppercase tracking-wide">{speakingLabel}</span> : null}
     </span>
   );
 }
@@ -1421,6 +1441,13 @@ function StatusBadge({ label, status }: { label: string; status: SessionStatus }
       {label}
     </span>
   );
+}
+
+function formatTemplate(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce((acc, [key, value]) => {
+    const pattern = new RegExp(`\\{\\{${key}\\}}`, 'g');
+    return acc.replace(pattern, value);
+  }, template);
 }
 
 async function safeParseJson(response: Response) {

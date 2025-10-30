@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from "next/link";
 import { TopicTree } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
+import { useLocale } from '@/lib/context/LocaleContext';
+import type { Dictionary } from '@/lib/i18n/dictionaries';
 
 type Mode = 'new' | 'extend';
 
@@ -27,14 +29,6 @@ interface Step {
   optional?: boolean;
 }
 
-const DEFAULT_FOCUS_SUGGESTIONS = [
-  'Onboarding new hires',
-  'Manufacturing process',
-  'Critical equipment maintenance',
-  'Customer support playbook',
-  'Safety & compliance routines',
-];
-
 export default function SeedPage() {
   const {
     companyId,
@@ -42,6 +36,9 @@ export default function SeedPage() {
     setCompanyId,
     setCompanyName: setContextCompanyName,
   } = useCompany();
+  const { dictionary, locale } = useLocale();
+  const seedCopy = dictionary.seed;
+  const assistantCopy = seedCopy.assistant;
 
   const [mode, setMode] = useState<Mode>('new');
   const [formData, setFormData] = useState<FormData>({
@@ -96,50 +93,47 @@ export default function SeedPage() {
   const buildSteps = useCallback(
     (nextMode: Mode, form: FormData, hasExisting: boolean): Step[] => {
       const steps: Step[] = [];
+      const prompts = assistantCopy.prompts;
 
       if (nextMode === 'new' && !form.companyName) {
         steps.push({
           id: 'companyName',
           field: 'companyName',
-          prompt: "First things first—what's the company called?",
+          prompt: prompts.companyName,
         });
       }
 
       steps.push({
         id: 'companyUrl',
         field: 'companyUrl',
-        prompt: 'Do you have a public URL I can skim for extra context? (optional)',
+        prompt: prompts.companyUrl,
         optional: true,
       });
 
       steps.push({
         id: 'focusArea',
         field: 'focusArea',
-        prompt:
-          nextMode === 'extend' && hasExisting
-            ? 'Which product, business unit, or knowledge area should we extend next?'
-            : 'Which product, business unit, or knowledge area should we focus on first?',
+        prompt: nextMode === 'extend' && hasExisting ? prompts.focusExtend : prompts.focusNew,
       });
 
       steps.push({
         id: 'description',
         field: 'description',
-        prompt:
-          nextMode === 'extend' && hasExisting
-            ? 'Share any fresh context or goals for this update so the map stays concise.'
-            : 'Share a quick description so I can tailor the map to the way your company operates.',
+        prompt: nextMode === 'extend' && hasExisting ? prompts.descriptionExtend : prompts.descriptionNew,
       });
 
       return steps;
     },
-    []
+    [assistantCopy]
   );
 
   const buildInitialMessages = useCallback(
     (nextMode: Mode, form: FormData, nextSteps: Step[], hasExisting: boolean) => {
-      const intro = nextMode === 'extend' && hasExisting
-        ? `We already have a knowledge map for ${form.companyName || 'this company'}. Let's capture a fresh slice so I can extend it without duplicating what we know.`
-        : "Let's gather a few essentials so I can draft a concise topic map you can interview against.";
+      const companyName = form.companyName || assistantCopy.intros.extendFallback;
+      const intro =
+        nextMode === 'extend' && hasExisting
+          ? formatTemplate(assistantCopy.intros.extend, { company: companyName })
+          : assistantCopy.intros.new;
 
       const initial: ChatMessage[] = [createMessage('assistant', intro)];
 
@@ -149,7 +143,7 @@ export default function SeedPage() {
 
       return initial;
     },
-    [createMessage]
+    [assistantCopy, createMessage]
   );
 
   const resetConversation = useCallback(
@@ -225,8 +219,8 @@ export default function SeedPage() {
     if (existingTopicTree) {
       return existingTopicTree.topics.map((topic) => topic.name).slice(0, 6);
     }
-    return DEFAULT_FOCUS_SUGGESTIONS;
-  }, [existingTopicTree]);
+    return seedCopy.focusSuggestions;
+  }, [existingTopicTree, seedCopy]);
 
   const currentStep = steps[currentStepIndex];
   const inputDisabled = loading || !currentStep;
@@ -244,7 +238,7 @@ export default function SeedPage() {
 
   const handleGenerate = useCallback(
     async (completedForm: FormData) => {
-      const assistantCue = createMessage('assistant', 'Great. Give me a moment to map this out…');
+      const assistantCue = createMessage('assistant', assistantCopy.mappingCue);
       appendMessages([assistantCue]);
       setLoading(true);
       setError('');
@@ -257,6 +251,7 @@ export default function SeedPage() {
           description: completedForm.description,
           focusArea: completedForm.focusArea,
           mode,
+          locale,
         };
 
         if (mode === 'extend' && existingTopicTree && companyId) {
@@ -271,8 +266,8 @@ export default function SeedPage() {
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Failed to generate topic tree' }));
-          throw new Error(errorData.error || 'Failed to generate topic tree');
+          const errorData = await response.json().catch(() => ({ error: assistantCopy.failure }));
+          throw new Error(errorData.error || assistantCopy.failure);
         }
 
         const data = await response.json();
@@ -280,10 +275,7 @@ export default function SeedPage() {
         setTopicTree(simplified);
         setExistingTopicTree(simplified);
         appendMessages([
-          createMessage(
-            'assistant',
-            'All set! Scroll down to review the refreshed map or jump straight into the interview.'
-          ),
+          createMessage('assistant', assistantCopy.success),
         ]);
 
         if (data.companyId) {
@@ -306,24 +298,21 @@ export default function SeedPage() {
         setMode('extend');
       } catch (err) {
         console.error('Seed error:', err);
-        setError(err instanceof Error ? err.message : 'Failed to generate topic tree');
-        appendMessages([
-          createMessage(
-            'assistant',
-            'I hit a snag capturing the topics. Fix the issue above and we can try again.'
-          ),
-        ]);
+        setError(err instanceof Error ? err.message : assistantCopy.failure);
+        appendMessages([createMessage('assistant', assistantCopy.failure)]);
       } finally {
         setLoading(false);
       }
     },
     [
       appendMessages,
+      assistantCopy,
       companyId,
       createMessage,
       existingTopicTree,
       fetchLatestTopicTree,
       mode,
+      locale,
       setCompanyId,
       setContextCompanyName,
       simplifyTopicTree,
@@ -340,14 +329,14 @@ export default function SeedPage() {
 
       const trimmedValue = inputValue.trim();
       if (!trimmedValue && !currentStep.optional) {
-        setError('Please provide a quick answer so I can keep going.');
+        setError(assistantCopy.errorRequired);
         return;
       }
       setError('');
 
       const userMessage = createMessage(
         'user',
-        trimmedValue.length > 0 ? trimmedValue : currentStep.optional ? '[Skipped]' : ''
+        trimmedValue.length > 0 ? trimmedValue : currentStep.optional ? assistantCopy.skipTag : ''
       );
       appendMessages([userMessage]);
       const updatedForm = {
@@ -368,6 +357,7 @@ export default function SeedPage() {
       }
     },
     [
+      assistantCopy,
       appendMessages,
       createMessage,
       currentStep,
@@ -414,14 +404,12 @@ export default function SeedPage() {
         <section className="flex flex-col gap-4 rounded-3xl border border-white/60 bg-white p-5 shadow-md ring-1 ring-slate-900/10">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Seed topics</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                Start with a focused map and refine as you capture more knowledge.
-              </p>
+              <h1 className="text-2xl font-semibold text-slate-900">{seedCopy.title}</h1>
+              <p className="mt-1 text-sm text-slate-600">{seedCopy.subtitle}</p>
             </div>
             {existingTopicTree ? (
               <Link href="/dashboard" className="hidden text-xs font-semibold text-indigo-600 sm:block">
-                View dashboard →
+                {seedCopy.dashboardLink}
               </Link>
             ) : null}
           </div>
@@ -433,19 +421,20 @@ export default function SeedPage() {
                   topicTree={existingTopicTree}
                   onExtend={startExtendFlow}
                   onSeedNew={startNewCompanyFlow}
+                  panels={seedCopy.panels}
                 />
               ) : (
-                <FirstTimeCard />
+                <FirstTimeCard panels={seedCopy.panels} />
               )}
             </div>
-            <TipsCard />
+            <TipsCard panels={seedCopy.panels} />
           </div>
         </section>
 
         <section className="relative flex flex-col rounded-3xl border border-white/60 bg-white p-0 shadow-xl ring-1 ring-slate-900/10">
           <div className="flex min-h-[460px] flex-1 flex-col rounded-3xl bg-gradient-to-br from-slate-950/92 via-slate-900/88 to-slate-800/85 p-6 text-slate-100">
             <div className="text-sm font-semibold uppercase tracking-[0.35em] text-slate-400">
-              Intake assistant
+              {seedCopy.assistantLabel}
             </div>
             <div className="mt-4 flex-1 space-y-4 overflow-y-auto pr-2 text-sm">
               {messages.map((message) => (
@@ -454,7 +443,7 @@ export default function SeedPage() {
               {loading ? (
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <span className="h-2 w-2 animate-ping rounded-full bg-indigo-300" />
-                  Mapping topics…
+                  {assistantCopy.mappingIndicator}
                 </div>
               ) : null}
             </div>
@@ -481,8 +470,8 @@ export default function SeedPage() {
                     }}
                     placeholder={
                       currentStep
-                        ? 'Type your answer and press enter…'
-                        : 'All set! Use the actions above to seed another area.'
+                        ? assistantCopy.placeholderActive
+                        : assistantCopy.placeholderComplete
                     }
                     className={cn(
                       'w-full resize-none rounded-xl border border-slate-600/50 bg-slate-900/60 px-4 py-3 text-sm text-slate-100 shadow-inner shadow-black/20 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-300/40 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500'
@@ -499,7 +488,7 @@ export default function SeedPage() {
                       : 'bg-indigo-500 text-white hover:bg-indigo-400'
                   )}
                 >
-                  Send
+                  {assistantCopy.send}
                 </button>
               </form>
               {currentStep?.id === 'focusArea' ? (
@@ -518,7 +507,7 @@ export default function SeedPage() {
               ) : null}
               {!currentStep && (
                 <div className="rounded-xl border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
-                  Want to add another area or start fresh? Use the actions on the left to relaunch the intake.
+                  {assistantCopy.completeHint}
                 </div>
               )}
             </div>
@@ -530,23 +519,25 @@ export default function SeedPage() {
         <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <span className="badge-soft">Generated map</span>
-              <h2 className="mt-3 text-2xl font-semibold text-slate-900">Topic tree preview</h2>
-              <p className="text-sm text-slate-500">Company: {topicTree.company}</p>
+              <span className="badge-soft">{seedCopy.results.badge}</span>
+              <h2 className="mt-3 text-2xl font-semibold text-slate-900">{seedCopy.results.title}</h2>
+              <p className="text-sm text-slate-500">
+                {seedCopy.results.companyLabel}: {topicTree.company}
+              </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <Link href="/interview" className="btn-primary">
-                Start interview
+                {seedCopy.results.startInterview}
               </Link>
               <Link href="/dashboard" className="btn-secondary">
-                View dashboard
+                {seedCopy.results.viewDashboard}
               </Link>
             </div>
           </div>
 
           <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {topicTree.topics.map((topic) => (
-              <TopicPreview key={topic.id} topic={topic} />
+              <TopicPreview key={topic.id} topic={topic} labels={seedCopy.topicPreview} />
             ))}
           </div>
         </section>
@@ -575,16 +566,18 @@ function CurrentMapCard({
   topicTree,
   onExtend,
   onSeedNew,
+  panels,
 }: {
   topicTree: TopicTree;
   onExtend: () => void;
   onSeedNew: () => void;
+  panels: Dictionary['seed']['panels'];
 }) {
   return (
     <div className="space-y-4 text-sm text-slate-600">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-semibold text-slate-900">Current map</p>
+          <p className="font-semibold text-slate-900">{panels.currentTitle}</p>
           <p>{topicTree.company}</p>
         </div>
         <div className="flex gap-2 text-xs">
@@ -593,14 +586,14 @@ function CurrentMapCard({
             onClick={onExtend}
             className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-600 hover:border-indigo-200 hover:text-indigo-600"
           >
-            Extend
+            {panels.extend}
           </button>
           <button
             type="button"
             onClick={onSeedNew}
             className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-600 hover:border-indigo-200 hover:text-indigo-600"
           >
-            New company
+            {panels.newCompany}
           </button>
         </div>
       </div>
@@ -612,56 +605,57 @@ function CurrentMapCard({
               {(topic.targets || [])
                 .slice(0, 2)
                 .map((target: any) => target.q)
-                .join(' • ') || 'Prompts ready to go'}
+                .join(' • ') || panels.promptsReady}
             </p>
           </div>
         ))}
       </div>
       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-        Extend one area at a time—you can always loop back to add another division.
+        {panels.reminder}
       </div>
     </div>
   );
 }
 
-function FirstTimeCard() {
+function FirstTimeCard({ panels }: { panels: Dictionary['seed']['panels'] }) {
   return (
     <div className="space-y-4 text-sm text-slate-600">
       <div>
-        <p className="font-semibold text-slate-900">New company?</p>
-        <p>Share the basics—name, optional URL, and the first area you want to document. We’ll return a compact, interview-ready topic list.</p>
+        <p className="font-semibold text-slate-900">{panels.firstTimeTitle}</p>
+        <p>{panels.firstTimeDescription}</p>
       </div>
       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-        <p className="font-semibold text-slate-600">Example inputs</p>
+        <p className="font-semibold text-slate-600">{panels.examplesTitle}</p>
         <ul className="mt-2 space-y-1">
-          <li>• Company name: “Acme Precision Parts”</li>
-          <li>• Focus area: “CNC machining QA checks”</li>
-          <li>• Description: 2–3 sentences on teams, processes, or pain points</li>
+          {panels.examples.map((example) => (
+            <li key={example}>• {example}</li>
+          ))}
         </ul>
       </div>
     </div>
   );
 }
 
-function TipsCard() {
+function TipsCard({ panels }: { panels: Dictionary['seed']['panels'] }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-      <p className="font-semibold text-slate-600">Tips</p>
+      <p className="font-semibold text-slate-600">{panels.tipsTitle}</p>
       <ul className="mt-2 space-y-1">
-        <li>• Be specific (“Assembly line onboarding” beats “operations”).</li>
-        <li>• Re-run the intake anytime to add a new division or product line.</li>
+        {panels.tips.map((tip) => (
+          <li key={tip}>• {tip}</li>
+        ))}
       </ul>
     </div>
   );
 }
 
-function TopicPreview({ topic }: { topic: any }) {
+function TopicPreview({ topic, labels }: { topic: any; labels: Dictionary['seed']['topicPreview'] }) {
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-white/60 bg-white/80 p-5 shadow-sm ring-1 ring-slate-900/10 backdrop-blur">
       <div>
         <h3 className="text-base font-semibold text-slate-900">{topic.name}</h3>
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-          Weight {topic.weight ?? 3}
+          {labels.weightLabel} {topic.weight ?? 3}
         </p>
       </div>
       <div className="space-y-2 text-sm text-slate-600">
@@ -681,7 +675,7 @@ function TopicPreview({ topic }: { topic: any }) {
             <p className="font-semibold">{child.name}</p>
             <p className="mt-1 text-xs text-indigo-500">
               {(child.targets || []).slice(0, 2).map((target: any) => target.q).join(' • ') ||
-                'Follow-up prompts ready'}
+                labels.followUps}
             </p>
           </div>
         ))}
@@ -689,5 +683,13 @@ function TopicPreview({ topic }: { topic: any }) {
     </div>
   );
 }
+
+const formatTemplate = (template: string, values: Record<string, string>) => {
+  return Object.entries(values).reduce((acc, [key, value]) => {
+    const pattern = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+    return acc.replace(pattern, value);
+  }, template);
+};
+
 const cn = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(' ');

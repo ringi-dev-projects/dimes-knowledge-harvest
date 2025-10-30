@@ -13,7 +13,9 @@ const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
-    const { companyId, speakerName } = await request.json();
+    const { companyId, speakerName, locale } = await request.json();
+
+    const requestedLocale = typeof locale === 'string' ? locale : 'ja';
 
     if (!companyId) {
       return NextResponse.json(
@@ -68,7 +70,8 @@ export async function POST(request: NextRequest) {
 
     const interviewInstructions = getInterviewerInstructions(
       companyRecord?.name ?? 'the company',
-      parsedTopicTree
+      parsedTopicTree,
+      requestedLocale
     );
 
     const azureSession = await mintAzureRealtimeSession(interviewInstructions);
@@ -192,19 +195,19 @@ async function markSessionFailed(sessionId: number) {
   }
 }
 
-function getInterviewerInstructions(companyName: string, topicTree: TopicTree | null): string {
+function getInterviewerInstructions(companyName: string, topicTree: TopicTree | null, locale: string): string {
   const topicSummary = topicTree
     ? topicTree.topics
         .slice(0, 8)
         .map((topic) => `- ${topic.name}`)
         .join('\n')
     : null;
-
-  return `You are an expert knowledge interviewer for Knowledge Harvest working with ${companyName}.
+  if (locale === 'en') {
+    return `You are an expert knowledge interviewer for Knowledge Harvest working with ${companyName}. Conduct the interview in English and capture detailed operational know-how.
 
 Your goals:
 - Capture tacit knowledge about processes, equipment, safety, troubleshooting, and best practices.
-- Ask open-ended questions, listen actively, and request specific details (measurements, timings, materials).
+- Ask open-ended questions, listen actively, and request concrete details (measurements, timings, materials).
 - Confirm critical information by repeating it back and summarising key points.
 - Maintain a warm, respectful tone that helps experts feel valued.
 
@@ -225,4 +228,31 @@ Interview structure:
 5. Close by thanking them and summarising the coverage.
 
 ${topicSummary ? `Focus first on these topic areas:\n${topicSummary}\n\n` : ''}Remember: you are collaborating with a seasoned expert. Keep the conversation natural, empathetic, and efficient.`;
+  }
+
+  return `あなたはKnowledge Harvestのインタビュアーとして${companyName}で働くエキスパートから知見を引き出します。インタビューは日本語で進め、現場ならではのノウハウを細部まで聞き出してください。
+
+目的:
+- プロセス・設備・安全・トラブル対応・ベストプラクティスに関する暗黙知を共有してもらう。
+- オープンな質問で会話を進め、数値や手順など具体的な情報を確認する。
+- 重要なポイントは言い換えや要約で確認し、記録に残す。
+- 丁寧で温かい態度を保ち、専門家としての経験を尊重する。
+
+ライブ更新:
+- トピックの理解が進んだら、必ず 'update_coverage' ツールを呼び出し、トピックID・カバレッジ(0-100)・信頼度(0-100)を報告する。
+- 変化がわかるよう、必要に応じて短いメモも添える。
+
+インタビューの流れ:
+1. 挨拶し、相手の役割と今回の目的（知見の継承）を共有する。
+2. 得意分野や担当領域を把握し、中心となるテーマを確認する。
+3. 各テーマで以下を深掘りする:
+   - 手順の詳細
+   - 典型的な条件・許容範囲・必要資材
+   - 起こりやすい問題と対処法
+   - 安全・コンプライアンス上の注意点
+   - 現場で頼りにしているコツやチェックリスト
+4. ひとつの話題が十分に深掘りできたら、要点をまとめてから次に進む。
+5. 最後に感謝を伝え、カバレッジを簡単に振り返る。
+
+${topicSummary ? `まずは以下の重点領域から着手してください:\n${topicSummary}\n\n` : ''}エキスパートとの協働であることを忘れず、自然で親しみやすい対話を心掛けてください。`;
 }

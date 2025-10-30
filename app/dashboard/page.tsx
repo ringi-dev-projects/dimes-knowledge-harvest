@@ -4,6 +4,21 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from "next/link";
 import { CoverageMetrics } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
+import { useLocale } from '@/lib/context/LocaleContext';
+import type { Dictionary, Locale } from '@/lib/i18n/dictionaries';
+
+type InterviewSummary = {
+  id: number;
+  companyId: number;
+  speakerName: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  status: string;
+  durationSeconds: number | null;
+  messageCount: number;
+  knowledgeAtomCount: number;
+  audioUrl: string | null;
+};
 
 const MOCK_INTERVIEWS: InterviewSummary[] = [
   {
@@ -51,6 +66,13 @@ export default function DashboardPage() {
   const [interviews, setInterviews] = useState<InterviewSummary[]>([]);
   const [interviewsLoading, setInterviewsLoading] = useState(true);
   const { companyId, companyName } = useCompany();
+  const { dictionary, locale } = useLocale();
+  const tDash = dictionary.dashboard;
+  const tCommon = dictionary.common;
+  const metricsText = tDash.metrics;
+  const coverageText = tDash.coverageSection;
+  const interviewsText = tDash.interviewsSection;
+  const cardText = tDash.cards;
 
   const loadData = useCallback(async () => {
     if (!companyId && !useMockData) {
@@ -127,7 +149,7 @@ export default function DashboardPage() {
     : companyId
     ? `/docs/${companyId}`
     : '/seed';
-  const docsLabel = !companyId && !useMockData ? 'Seed Topics to Enable Docs' : 'Generate Documentation';
+  const docsLabel = !companyId && !useMockData ? tDash.hero.docsDisabled : tDash.hero.docsEnabled;
   const docsButtonClass = !companyId && !useMockData ? 'btn-secondary' : 'btn-primary';
   const recentInterviews = useMockData ? MOCK_INTERVIEWS : interviews;
 
@@ -136,12 +158,13 @@ export default function DashboardPage() {
       <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
-            <span className="badge-soft">Coverage intelligence</span>
+            <span className="badge-soft">{tDash.hero.badge}</span>
             <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
-              Knowledge Coverage Dashboard
+              {tDash.hero.title}
             </h1>
             <p className="max-w-xl text-sm text-slate-600 sm:text-base">
-              {companyName ? `${companyName} - ` : ''}Track capture progress by topic, understand confidence levels, and focus interviews where they matter most.
+              {companyName ? `${companyName} - ` : ''}
+              {tDash.hero.description}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -149,7 +172,7 @@ export default function DashboardPage() {
               onClick={() => setUseMockData(!useMockData)}
               className={`btn-secondary ${useMockData ? 'border-indigo-200 bg-indigo-50 text-indigo-600' : ''}`}
             >
-              {useMockData ? 'Show Real Data' : 'Show Mock Data'}
+              {useMockData ? tDash.hero.toggleMockOn : tDash.hero.toggleMockOff}
             </button>
             <Link href={docsLink} className={docsButtonClass}>
               {docsLabel}
@@ -159,10 +182,10 @@ export default function DashboardPage() {
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-3xl bg-gradient-to-br from-indigo-500 via-indigo-500/90 to-purple-500 p-6 text-white shadow-lg shadow-indigo-500/30">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">Overall Coverage</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{metricsText.coverage.title}</p>
             <div className="mt-4 flex items-baseline gap-2">
               <span className="text-4xl font-semibold">{overallCoverage}%</span>
-              <span className="text-sm text-white/70">of targeted knowledge captured</span>
+              <span className="text-sm text-white/70">{metricsText.coverage.subtitle}</span>
             </div>
             <div className="mt-4 h-2 w-full rounded-full bg-white/30">
               <div
@@ -173,10 +196,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-3xl bg-gradient-to-br from-emerald-400 via-emerald-500 to-emerald-600 p-6 text-white shadow-lg shadow-emerald-500/25">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">Confidence Score</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{metricsText.confidence.title}</p>
             <div className="mt-4 flex items-baseline gap-2">
               <span className="text-4xl font-semibold">{overallConfidence}%</span>
-              <span className="text-sm text-white/70">validated across interviews</span>
+              <span className="text-sm text-white/70">{metricsText.confidence.subtitle}</span>
             </div>
             <div className="mt-4 h-2 w-full rounded-full bg-white/30">
               <div
@@ -187,18 +210,20 @@ export default function DashboardPage() {
           </div>
 
           <div className="glass-card">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Topics Covered</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{metricsText.topics.title}</p>
             <div className="mt-3 flex items-end gap-2">
               <span className="text-4xl font-semibold text-slate-900">
                 {metrics.filter((m) => m.coveragePercent > 50).length}
               </span>
-              <span className="text-sm text-slate-500">of {metrics.length}</span>
+              <span className="text-sm text-slate-500">
+                {formatTemplate(metricsText.topics.suffix, { total: metrics.length })}
+              </span>
             </div>
-            <p className="mt-4 text-sm text-slate-600">High-confidence topics that surpass the 50% coverage threshold.</p>
+            <p className="mt-4 text-sm text-slate-600">{metricsText.topics.summary}</p>
           </div>
 
           <div className="glass-card">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Interview Sessions</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{metricsText.interviewSessions.title}</p>
             <div className="mt-3 flex items-end gap-2">
               <span className="text-4xl font-semibold text-slate-900">
                 {interviewCount}
@@ -206,8 +231,8 @@ export default function DashboardPage() {
             </div>
             <p className="mt-4 text-sm text-slate-600">
               {interviewCount === 0
-                ? 'Sync this dashboard with live interviews to watch coverage fill in.'
-                : 'Review captured sessions below to see what knowledge you unlocked.'}
+                ? metricsText.interviewSessions.empty
+                : metricsText.interviewSessions.nonEmpty}
             </p>
           </div>
         </div>
@@ -216,41 +241,39 @@ export default function DashboardPage() {
       <section className="rounded-3xl border border-white/60 bg-white/95 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
         <div className="flex items-center justify-between gap-3 border-b border-white/80 px-6 py-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Topic Coverage Details</h2>
-            <p className="text-sm text-slate-500">Dive into each topic to uncover gaps, confidence trends, and next-step prompts.</p>
+            <h2 className="text-lg font-semibold text-slate-900">{coverageText.title}</h2>
+            <p className="text-sm text-slate-500">{coverageText.subtitle}</p>
           </div>
         </div>
 
         {loading ? (
           <div className="p-12 text-center text-slate-500">
             <div className="inline-flex h-12 w-12 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-500" />
-            <p className="mt-4 text-sm">Fetching the latest coverage metrics…</p>
+            <p className="mt-4 text-sm">{coverageText.loading}</p>
           </div>
         ) : metrics.length === 0 ? (
           <div className="p-12 text-center">
             <svg className="mx-auto h-12 w-12 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
             </svg>
-            <p className="mt-2 text-slate-600">No coverage data yet</p>
-            <p className="mt-1 text-sm text-slate-500">
-              Seed topics and launch interviews to see progress here.
-            </p>
+            <p className="mt-2 text-slate-600">{coverageText.emptyTitle}</p>
+            <p className="mt-1 text-sm text-slate-500">{coverageText.emptySubtitle}</p>
             <div className="mt-4 flex justify-center gap-3">
               <Link href="/seed" className="btn-primary">
-                Seed Topics
+                {coverageText.seedCta}
               </Link>
               <button
                 onClick={() => setUseMockData(true)}
                 className="btn-secondary"
               >
-                Load Mock Data
+                {coverageText.mockCta}
               </button>
             </div>
           </div>
         ) : (
           <div className="divide-y divide-slate-200/70">
             {metrics.map((metric) => (
-              <TopicCoverageRow key={metric.topicId} metric={metric} />
+              <TopicCoverageRow key={metric.topicId} metric={metric} coverageCopy={cardText.coverage} />
             ))}
           </div>
         )}
@@ -259,43 +282,50 @@ export default function DashboardPage() {
       <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
         <div className="flex flex-col gap-4 border-b border-white/80 pb-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Interview History & Highlights</h2>
-            <p className="text-sm text-slate-500">
-              Track recorded sessions, duration, and how much knowledge each interview produced.
-            </p>
+            <h2 className="text-lg font-semibold text-slate-900">{interviewsText.title}</h2>
+            <p className="text-sm text-slate-500">{interviewsText.subtitle}</p>
           </div>
           <Link href="/interview" className="btn-secondary">
-            Start New Interview
+            {interviewsText.startCta}
           </Link>
         </div>
 
         {interviewsLoading ? (
           <div className="p-12 text-center text-slate-500">
             <div className="inline-flex h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-500" />
-            <p className="mt-4 text-sm">Loading interview sessions…</p>
+            <p className="mt-4 text-sm">{interviewsText.loading}</p>
           </div>
         ) : recentInterviews.length === 0 ? (
           <div className="p-12 text-center">
             <svg className="mx-auto h-12 w-12 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
             </svg>
-            <p className="mt-2 text-slate-600">No interviews recorded yet</p>
-            <p className="mt-1 text-sm text-slate-500">
-              Launch your first session to start capturing expert know-how.
-            </p>
+            <p className="mt-2 text-slate-600">{interviewsText.emptyTitle}</p>
+            <p className="mt-1 text-sm text-slate-500">{interviewsText.emptySubtitle}</p>
             <div className="mt-4 flex justify-center gap-3">
               <Link href="/interview" className="btn-primary">
-                Launch Interview
+                {interviewsText.primaryCta}
               </Link>
               <Link href="/seed" className="btn-secondary">
-                Seed Topics
+                {interviewsText.secondaryCta}
               </Link>
             </div>
           </div>
         ) : (
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {recentInterviews.slice(0, 6).map((interview) => (
-              <InterviewCard key={interview.id} interview={interview} mock={useMockData} />
+              <InterviewCard
+                key={interview.id}
+                interview={interview}
+                mock={useMockData}
+                locale={locale}
+                cardText={cardText}
+                audioLabel={interviewsText.audioBadge}
+                docLinkLabel={interviewsText.docLink}
+                durationCopy={tCommon.duration}
+                timeCopy={tCommon.time}
+                statusCopy={tCommon.statuses}
+              />
             ))}
           </div>
         )}
@@ -304,18 +334,45 @@ export default function DashboardPage() {
   );
 }
 
-function InterviewCard({ interview, mock }: { interview: InterviewSummary; mock: boolean }) {
+function formatTemplate(template: string, values: Record<string, string | number>): string {
+  return Object.entries(values).reduce((acc, [key, value]) => {
+    const pattern = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+    return acc.replace(pattern, String(value));
+  }, template);
+}
+
+function InterviewCard({
+  interview,
+  mock,
+  locale,
+  cardText,
+  audioLabel,
+  docLinkLabel,
+  durationCopy,
+  timeCopy,
+  statusCopy,
+}: {
+  interview: InterviewSummary;
+  mock: boolean;
+  locale: Locale;
+  cardText: Dictionary['dashboard']['cards'];
+  audioLabel: string;
+  docLinkLabel: string;
+  durationCopy: Dictionary['common']['duration'];
+  timeCopy: Dictionary['common']['time'];
+  statusCopy: Dictionary['common']['statuses'];
+}) {
   const started = new Date(interview.startedAt);
-  const durationText = formatDuration(interview.durationSeconds);
-  const relativeTime = formatRelativeTime(started);
-  const { badgeLabel, badgeClass } = getStatusStyles(interview.status);
+  const durationText = formatDuration(interview.durationSeconds, durationCopy);
+  const relativeTime = formatRelativeTime(started, locale, timeCopy);
+  const { badgeLabel, badgeClass } = getStatusStyles(interview.status, statusCopy);
 
   return (
     <div className="rounded-2xl border border-white/60 bg-white/90 p-5 shadow-sm ring-1 ring-slate-900/10 backdrop-blur">
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-slate-900">
-            {interview.speakerName || 'Expert contributor'}
+            {interview.speakerName || cardText.defaultSpeaker}
           </p>
           <p className="text-xs text-slate-500">{relativeTime}</p>
         </div>
@@ -326,15 +383,15 @@ function InterviewCard({ interview, mock }: { interview: InterviewSummary; mock:
 
       <dl className="mt-4 grid gap-4 text-sm text-slate-600 sm:grid-cols-3">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Duration</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">{cardText.metrics.duration}</dt>
           <dd className="mt-1 font-medium text-slate-900">{durationText}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Knowledge atoms</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">{cardText.metrics.knowledge}</dt>
           <dd className="mt-1 font-medium text-slate-900">{interview.knowledgeAtomCount}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Messages captured</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">{cardText.metrics.messages}</dt>
           <dd className="mt-1 font-medium text-slate-900">{interview.messageCount}</dd>
         </div>
       </dl>
@@ -342,69 +399,79 @@ function InterviewCard({ interview, mock }: { interview: InterviewSummary; mock:
       <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          Audio archived
+          {audioLabel}
         </span>
         <Link
           href={mock ? '/docs/1?mock=true' : `/docs/${interview.companyId}`}
           className="inline-flex items-center rounded-full border border-slate-200 px-3 py-1 font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600"
         >
-          View documentation
+          {docLinkLabel}
         </Link>
       </div>
     </div>
   );
 }
 
-function getStatusStyles(status: string) {
+function getStatusStyles(status: string, statusCopy: Dictionary['common']['statuses']) {
   switch (status) {
     case 'completed':
       return {
-        badgeLabel: 'Completed',
+        badgeLabel: statusCopy.completed,
         badgeClass: 'bg-emerald-100 text-emerald-700',
       };
     case 'active':
       return {
-        badgeLabel: 'In progress',
+        badgeLabel: statusCopy.active,
         badgeClass: 'bg-indigo-100 text-indigo-600',
+      };
+    case 'failed':
+      return {
+        badgeLabel: statusCopy.failed,
+        badgeClass: 'bg-rose-100 text-rose-600',
       };
     default:
       return {
-        badgeLabel: status,
+        badgeLabel: formatTemplate(statusCopy.default, { status }),
         badgeClass: 'bg-slate-100 text-slate-600',
       };
   }
 }
 
-function formatDuration(seconds: number | null): string {
+function formatDuration(seconds: number | null, durationCopy: Dictionary['common']['duration']): string {
   if (!seconds || seconds <= 0) {
-    return '—';
+    return durationCopy.placeholder;
   }
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   if (minutes > 0) {
-    return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+    return remainder > 0
+      ? formatTemplate(durationCopy.formatFull, { minutes, seconds: remainder })
+      : formatTemplate(durationCopy.formatMinutes, { minutes });
   }
-  return `${remainder}s`;
+  return formatTemplate(durationCopy.formatSeconds, { seconds: remainder });
 }
 
-function formatRelativeTime(date: Date): string {
+function formatRelativeTime(date: Date, locale: Locale, timeCopy: Dictionary['common']['time']): string {
   const diffMs = Date.now() - date.getTime();
   const diffMinutes = Math.round(diffMs / (1000 * 60));
   if (diffMinutes < 1) {
-    return 'Moments ago';
+    return timeCopy.momentsAgo;
   }
+
+  const formatter = new Intl.RelativeTimeFormat(locale === 'ja' ? 'ja-JP' : 'en-US', { numeric: 'auto' });
+
   if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
+    return formatter.format(-diffMinutes, 'minute');
   }
   const diffHours = Math.round(diffMinutes / 60);
   if (diffHours < 24) {
-    return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+    return formatter.format(-diffHours, 'hour');
   }
   const diffDays = Math.round(diffHours / 24);
-  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+  return formatter.format(-diffDays, 'day');
 }
 
-function TopicCoverageRow({ metric }: { metric: CoverageMetrics }) {
+function TopicCoverageRow({ metric, coverageCopy }: { metric: CoverageMetrics; coverageCopy: Dictionary['dashboard']['cards']['coverage'] }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -416,13 +483,16 @@ function TopicCoverageRow({ metric }: { metric: CoverageMetrics }) {
         <div className="flex-1 space-y-1">
           <h3 className="text-base font-semibold text-slate-900">{metric.topicName}</h3>
           <p className="text-sm text-slate-500">
-            {metric.answeredQuestions} of {metric.targetQuestions} questions answered
+            {formatTemplate(coverageCopy.answeredTemplate, {
+              answered: metric.answeredQuestions,
+              total: metric.targetQuestions,
+            })}
           </p>
         </div>
 
         <div className="w-full max-w-sm">
           <div className="flex justify-between text-sm mb-1">
-            <span className="text-slate-500">Coverage</span>
+            <span className="text-slate-500">{coverageCopy.coverageLabel}</span>
             <span className="font-semibold text-slate-900">{metric.coveragePercent}%</span>
           </div>
           <div className="h-2 rounded-full bg-slate-200/80">
@@ -435,7 +505,7 @@ function TopicCoverageRow({ metric }: { metric: CoverageMetrics }) {
 
         <div className="w-full max-w-xs sm:max-w-[180px]">
           <div className="mb-1 flex justify-between text-sm">
-            <span className="text-slate-500">Confidence</span>
+            <span className="text-slate-500">{coverageCopy.confidenceLabel}</span>
             <span className="font-semibold text-slate-900">{metric.confidence}%</span>
           </div>
           <div className="h-2 rounded-full bg-slate-200/80">
@@ -455,7 +525,7 @@ function TopicCoverageRow({ metric }: { metric: CoverageMetrics }) {
 
       {expanded && metric.nextQuestions && metric.nextQuestions.length > 0 && (
         <div className="border-t border-slate-200/80 bg-slate-50/60 px-6 py-5">
-          <h4 className="mb-3 text-sm font-semibold text-slate-700">Next Questions to Ask</h4>
+          <h4 className="mb-3 text-sm font-semibold text-slate-700">{coverageCopy.nextQuestions}</h4>
           <ul className="space-y-1">
             {metric.nextQuestions.slice(0, 5).map((question, idx) => (
               <li key={idx} className="text-sm text-slate-600">

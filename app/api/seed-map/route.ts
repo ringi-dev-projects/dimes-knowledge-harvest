@@ -52,7 +52,11 @@ export async function POST(request: NextRequest) {
       companyId: incomingCompanyId,
       mode = 'new',
       existingTopicTree,
+      locale,
     } = await request.json();
+
+    const requestedLocale = typeof locale === 'string' ? locale : 'ja';
+    const targetLanguage = requestedLocale === 'en' ? 'English' : 'Japanese';
 
     const trimmedDescription = (description || '').trim();
     const trimmedFocusArea = (focusArea || '').trim();
@@ -129,6 +133,7 @@ Keep the structure lean:
 - Provide 2-3 target questions per topic and mark critical ones with required=true.
 - Use weight values from 1-5 to signal priority (5 = highest).
 - Avoid duplicating topics that already exist; refine or extend them with sharper prompts instead.
+Write all topic names, descriptions, and question prompts in ${targetLanguage}.
 ${mode === 'extend' && existingTopicsSnippet ? `\nExisting topic structure (for reference only, do not repeat verbatim):\n${existingTopicsSnippet}\n` : ''}
 
 Return ONLY valid JSON in this exact format:
