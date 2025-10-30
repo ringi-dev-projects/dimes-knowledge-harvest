@@ -10,7 +10,7 @@ permissions:
 
 env:
   WEB_APP_NAME: kh                      # your Azure Web App name
-  ACR_LOGIN_SERVER: yourregistry.azurecr.io   # e.g. dimesregistry.azurecr.io
+  ACR_LOGIN_SERVER: dimesnewaaps.azurecr.io   # e.g. dimesregistry.azurecr.io
   IMAGE_NAME: kh                        # repository/name inside ACR (no tag)
 
 jobs:
