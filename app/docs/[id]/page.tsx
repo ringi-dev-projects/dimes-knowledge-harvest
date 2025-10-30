@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, use } from 'react';
+import { useState, useEffect, useRef, use, useCallback } from 'react';
 
 interface DocumentSection {
   id: string;
@@ -22,11 +22,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
   const [activeSection, setActiveSection] = useState<string>('');
   const [generating, setGenerating] = useState(false);
 
-  useEffect(() => {
-    loadDocument();
-  }, [resolvedParams.id]);
-
-  const loadDocument = async () => {
+  const loadDocument = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch(`/api/docs/${resolvedParams.id}`);
@@ -42,7 +38,11 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
     } finally {
       setLoading(false);
     }
-  };
+  }, [resolvedParams.id]);
+
+  useEffect(() => {
+    loadDocument();
+  }, [loadDocument]);
 
   const exportDocument = async (format: 'html' | 'docx') => {
     setGenerating(true);

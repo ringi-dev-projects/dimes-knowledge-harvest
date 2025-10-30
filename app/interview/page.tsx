@@ -1,5 +1,6 @@
 'use client';
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InterviewMessage } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
@@ -19,10 +20,56 @@ interface RealtimeSessionPayload {
   expiresAt?: number | null;
 }
 
+interface CoverageEntry {
+  topicId: string;
+  topicName: string;
+  coverage: number;
+  confidence: number;
+}
+
+interface TopicNode {
+  id: string;
+  name: string;
+  weight: number;
+  targets?: Array<{ id: string; q: string; required: boolean }>;
+  children?: TopicNode[];
+}
+
 const TRANSCRIPTION_MODEL = 'whisper-1';
 const TRANSCRIPTION_LANGUAGE = 'en';
 const DEFAULT_INSTRUCTIONS =
   'You are a helpful interviewer focused on capturing operational knowledge with open-ended, respectful questions.';
+
+const SPEAKER_THRESHOLD = 0.05;
+const SPEAKER_DECAY_MS = 1200;
+
+const TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    name: 'update_coverage',
+    description:
+      'Call this to update live coverage progress for a topic. Provide the topic id, coverage percent, and confidence percent based on what the expert just said.',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic_id: { type: 'string', description: 'The topic identifier from the topic tree.' },
+        coverage_percent: {
+          type: 'number',
+          description: 'Progress for this topic from 0-100 based on answered questions.',
+        },
+        confidence_percent: {
+          type: 'number',
+          description: 'Confidence in the coverage from 0-100 based on clarity and corroboration.',
+        },
+        notes: {
+          type: 'string',
+          description: 'Optional context or highlights from the last answer.',
+        },
+      },
+      required: ['topic_id', 'coverage_percent', 'confidence_percent'],
+    },
+  },
+];
 
 export default function InterviewPage() {
   const { companyId, companyName } = useCompany();
@@ -33,6 +80,9 @@ export default function InterviewPage() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [error, setError] = useState('');
+  const [speakerLevels, setSpeakerLevels] = useState({ user: 0, assistant: 0 });
+  const [coverageProgress, setCoverageProgress] = useState<CoverageEntry[]>([]);
+  const [coverageLoading, setCoverageLoading] = useState(false);
 
   const sessionIdRef = useRef<number | null>(null);
   const messagesRef = useRef<InterviewMessage[]>([]);
@@ -43,11 +93,120 @@ export default function InterviewPage() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const assistantResponsesRef = useRef<Map<string, { index: number }>>(new Map());
   const userItemsRef = useRef<Map<string, { index: number }>>(new Map());
+  const assistantItemsRef = useRef<Map<string, number>>(new Map());
+  const userItemsByIdRef = useRef<Map<string, number>>(new Map());
   const sessionConfigRef = useRef<{ voice: string; instructions: string }>({
     voice: 'verse',
     instructions: DEFAULT_INSTRUCTIONS,
   });
   const audioRef = useRef<HTMLAudioElement>(null);
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
+  const activeSpeakerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const userAnalyserRef = useRef<AnalyserNode | null>(null);
+  const assistantAnalyserRef = useRef<AnalyserNode | null>(null);
+  const analyserSourcesRef = useRef<{ user?: MediaStreamAudioSourceNode; assistant?: MediaStreamAudioSourceNode }>({});
+  const animationFrameRef = useRef<number | null>(null);
+  const functionCallBuffersRef = useRef<Map<string, { name?: string; args: string }>>(new Map());
+  const topicGraphRef = useRef<Map<string, TopicNode>>(new Map());
+  const lastSpeakerRef = useRef<{ role: 'assistant' | 'user'; timestamp: number } | null>(null);
+
+  const [activeSpeaker, setActiveSpeaker] = useState<'assistant' | 'user' | null>(null);
+  const [postSessionInfo, setPostSessionInfo] = useState<{ sessionId: number; companyId?: number | null } | null>(null);
+
+  const loadTopicContext = useCallback(async () => {
+    if (!companyId) {
+      setCoverageProgress([]);
+      return;
+    }
+
+    try {
+      setCoverageLoading(true);
+      const [topicRes, coverageRes] = await Promise.all([
+        fetch(`/api/topic-tree/latest?companyId=${companyId}`),
+        fetch(`/api/coverage?companyId=${companyId}`),
+      ]);
+
+      let topicEntries: TopicNode[] = [];
+      if (topicRes.ok) {
+        const topicJson = await topicRes.json();
+        const tree = topicJson?.topicTree;
+        if (tree?.topics) {
+          topicEntries = tree.topics as TopicNode[];
+          topicGraphRef.current.clear();
+          const flatten = (nodeList: TopicNode[]) => {
+            nodeList.forEach((node) => {
+              topicGraphRef.current.set(node.id, node);
+              if (node.children) {
+                flatten(node.children);
+              }
+            });
+          };
+          flatten(topicEntries);
+        }
+      }
+
+      let initialCoverage: CoverageEntry[] = [];
+      if (topicEntries.length > 0) {
+        initialCoverage = topicEntries.slice(0, 4).map((topic) => ({
+          topicId: topic.id,
+          topicName: topic.name,
+          coverage: 0,
+          confidence: 0,
+        }));
+      }
+
+      if (coverageRes.ok) {
+        const coverageJson = await coverageRes.json();
+        const metrics: CoverageEntry[] = (coverageJson?.metrics || []).map((metric: any) => ({
+          topicId: metric.topicId,
+          topicName: metric.topicName,
+          coverage: metric.coveragePercent,
+          confidence: metric.confidence,
+        }));
+
+        if (initialCoverage.length === 0) {
+          initialCoverage = metrics.slice(0, 4);
+        } else {
+          initialCoverage = initialCoverage.map((entry) => {
+            const match = metrics.find((metric) => metric.topicId === entry.topicId);
+            return match
+              ? { ...entry, coverage: match.coverage, confidence: match.confidence }
+              : entry;
+          });
+        }
+      }
+
+      if (initialCoverage.length === 0) {
+        initialCoverage = [
+          { topicId: 'products_services', topicName: 'Products & Services', coverage: 0, confidence: 0 },
+          { topicId: 'processes', topicName: 'Processes', coverage: 0, confidence: 0 },
+          { topicId: 'equipment', topicName: 'Equipment', coverage: 0, confidence: 0 },
+          { topicId: 'safety', topicName: 'Safety', coverage: 0, confidence: 0 },
+        ];
+      }
+
+      setCoverageProgress(initialCoverage);
+    } catch (error) {
+      console.error('Failed to load topic context:', error);
+      setCoverageProgress([
+        { topicId: 'products_services', topicName: 'Products & Services', coverage: 0, confidence: 0 },
+        { topicId: 'processes', topicName: 'Processes', coverage: 0, confidence: 0 },
+        { topicId: 'equipment', topicName: 'Equipment', coverage: 0, confidence: 0 },
+        { topicId: 'safety', topicName: 'Safety', coverage: 0, confidence: 0 },
+      ]);
+    } finally {
+      setCoverageLoading(false);
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    if (companyId) {
+      loadTopicContext();
+    } else {
+      setCoverageProgress([]);
+    }
+  }, [companyId, loadTopicContext]);
 
   const updateMessages = useCallback(
     (updater: (prev: InterviewMessage[]) => InterviewMessage[]) => {
@@ -87,6 +246,114 @@ export default function InterviewPage() {
     [updateMessages]
   );
 
+  const markActiveSpeaker = useCallback((speaker: 'assistant' | 'user') => {
+    if (activeSpeakerTimeoutRef.current) {
+      clearTimeout(activeSpeakerTimeoutRef.current);
+    }
+    setActiveSpeaker(speaker);
+    activeSpeakerTimeoutRef.current = setTimeout(() => {
+      setActiveSpeaker(null);
+    }, 1500);
+    lastSpeakerRef.current = { role: speaker, timestamp: Date.now() };
+  }, []);
+
+  const ensureAudioContext = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    if (!audioContextRef.current) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        return null;
+      }
+      audioContextRef.current = new AudioCtx();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  const stopLevelMonitoring = useCallback(() => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    analyserSourcesRef.current.user?.disconnect();
+    analyserSourcesRef.current.assistant?.disconnect();
+    analyserSourcesRef.current = { };
+    userAnalyserRef.current = null;
+    assistantAnalyserRef.current = null;
+    setSpeakerLevels({ user: 0, assistant: 0 });
+  }, []);
+
+  const computeLevel = (analyser: AnalyserNode | null) => {
+    if (!analyser) {
+      return 0;
+    }
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteTimeDomainData(dataArray);
+    let sumSquares = 0;
+    for (let i = 0; i < bufferLength; i += 1) {
+      const normalized = (dataArray[i] - 128) / 128;
+      sumSquares += normalized * normalized;
+    }
+    const rms = Math.sqrt(sumSquares / bufferLength);
+    return Math.min(1, rms * 2);
+  };
+
+  const startLevelMonitoring = useCallback(() => {
+    const loop = () => {
+      const userLevel = computeLevel(userAnalyserRef.current);
+      const assistantLevel = computeLevel(assistantAnalyserRef.current);
+      setSpeakerLevels((prev) => {
+        const smoothedUser = prev.user * 0.6 + userLevel * 0.4;
+        const smoothedAssistant = prev.assistant * 0.6 + assistantLevel * 0.4;
+        return { user: smoothedUser, assistant: smoothedAssistant };
+      });
+
+      const now = Date.now();
+      if (userLevel > SPEAKER_THRESHOLD && userLevel > assistantLevel * 1.2) {
+        markActiveSpeaker('user');
+      } else if (assistantLevel > SPEAKER_THRESHOLD && assistantLevel > userLevel * 1.2) {
+        markActiveSpeaker('assistant');
+      } else if (lastSpeakerRef.current && now - lastSpeakerRef.current.timestamp > SPEAKER_DECAY_MS) {
+        setActiveSpeaker(null);
+      }
+
+      animationFrameRef.current = requestAnimationFrame(loop);
+    };
+
+    if (!animationFrameRef.current) {
+      animationFrameRef.current = requestAnimationFrame(loop);
+    }
+  }, [markActiveSpeaker]);
+
+  const setupAnalyserForStream = useCallback(
+    (stream: MediaStream, role: 'assistant' | 'user') => {
+      const audioCtx = ensureAudioContext();
+      if (!audioCtx) {
+        return;
+      }
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+
+      if (role === 'user') {
+        analyserSourcesRef.current.user?.disconnect();
+        analyserSourcesRef.current.user = source;
+        userAnalyserRef.current = analyser;
+      } else {
+        analyserSourcesRef.current.assistant?.disconnect();
+        analyserSourcesRef.current.assistant = source;
+        assistantAnalyserRef.current = analyser;
+      }
+
+      startLevelMonitoring();
+    },
+    [ensureAudioContext, startLevelMonitoring]
+  );
+
   const sendSessionBootstrap = useCallback(() => {
     const channel = dataChannelRef.current;
     if (!channel || channel.readyState !== 'open') {
@@ -112,11 +379,83 @@ export default function InterviewPage() {
           create_response: true,
           interrupt_response: true,
         },
+        tools: TOOL_DEFINITIONS,
+        tool_choice: 'auto',
       },
     };
 
     channel.send(JSON.stringify(payload));
   }, []);
+
+  const handleFunctionCall = useCallback(
+    (callId: string, buffer: { name?: string; args: string }) => {
+      const channel = dataChannelRef.current;
+      const functionName = buffer.name;
+      if (!functionName) {
+        return;
+      }
+
+      let parsedArgs: any = null;
+      if (buffer.args) {
+        try {
+          parsedArgs = JSON.parse(buffer.args);
+        } catch (error) {
+          console.warn('Failed to parse function call args:', buffer.args);
+        }
+      }
+
+      if (functionName === 'update_coverage' && parsedArgs) {
+        const topicId = parsedArgs.topic_id;
+        if (topicId) {
+          setCoverageProgress((prev) => {
+            const existingIndex = prev.findIndex((entry) => entry.topicId === topicId);
+            const coverageValue = typeof parsedArgs.coverage_percent === 'number' ? parsedArgs.coverage_percent : prev[existingIndex]?.coverage ?? 0;
+            const confidenceValue = typeof parsedArgs.confidence_percent === 'number' ? parsedArgs.confidence_percent : prev[existingIndex]?.confidence ?? 0;
+            const topicName = topicGraphRef.current.get(topicId)?.name || prev[existingIndex]?.topicName || topicId;
+            if (existingIndex >= 0) {
+              const next = [...prev];
+              next[existingIndex] = {
+                ...next[existingIndex],
+                topicName,
+                coverage: Math.max(0, Math.min(100, coverageValue)),
+                confidence: Math.max(0, Math.min(100, confidenceValue)),
+              };
+              return next;
+            }
+            return [
+              ...prev,
+              {
+                topicId,
+                topicName,
+                coverage: Math.max(0, Math.min(100, coverageValue)),
+                confidence: Math.max(0, Math.min(100, confidenceValue)),
+              },
+            ];
+          });
+        }
+      }
+
+      if (channel && channel.readyState === 'open') {
+        const ackPayload = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify({ status: 'ok' }),
+          },
+        };
+
+        try {
+          channel.send(JSON.stringify(ackPayload));
+        } catch (error) {
+          console.warn('Failed to acknowledge function call:', error);
+        }
+      }
+
+      functionCallBuffersRef.current.delete(callId);
+    },
+    [setCoverageProgress]
+  );
 
   const handleServerEvent = useCallback(
     (event: MessageEvent) => {
@@ -127,125 +466,259 @@ export default function InterviewPage() {
           return;
         }
 
-        if (eventType === 'session.created') {
-          setStatus('active');
-          return;
-        }
-
-        if (eventType === 'session.error') {
-          const message =
-            payload?.error?.message || 'The realtime session reported an error. Please try again.';
-          setError(message);
-          return;
-        }
-
-        if (eventType === 'conversation.item.input_audio_transcription.completed') {
-          const transcript: string = (payload?.transcript ?? '').trim();
-          if (!transcript) {
+        const ensureAssistantEntry = (responseId?: string, itemId?: string, initialContent = '') => {
+          if (!responseId && !itemId) {
             return;
           }
-          const itemId: string | undefined = payload?.item_id;
-          if (!itemId) {
-            return;
+          if (itemId && assistantItemsRef.current.has(itemId)) {
+            return assistantItemsRef.current.get(itemId);
           }
-          let entry = userItemsRef.current.get(itemId);
-          if (!entry) {
-            const index = appendMessage({
-              role: 'user',
-              content: transcript,
-              timestamp: Date.now(),
-            });
-            userItemsRef.current.set(itemId, { index });
-          } else {
-            updateMessageAt(entry.index, (message) => ({
-              ...message,
-              content: transcript,
-              timestamp: Date.now(),
-            }));
-          }
-          return;
-        }
-
-        if (eventType === 'conversation.item.input_audio_transcription.failed') {
-          console.warn('Input transcription failed:', payload);
-          return;
-        }
-
-        if (eventType === 'response.created') {
-          const responseId: string | undefined = payload?.response?.id ?? payload?.response_id;
-          if (!responseId) {
-            return;
+          if (responseId) {
+            const existing = assistantResponsesRef.current.get(responseId);
+            if (existing) {
+              if (itemId) {
+                assistantItemsRef.current.set(itemId, existing.index);
+              }
+              return existing.index;
+            }
           }
           const index = appendMessage({
             role: 'assistant',
-            content: '',
+            content: initialContent,
             timestamp: Date.now(),
           });
-          assistantResponsesRef.current.set(responseId, { index });
-          return;
-        }
-
-        if (
-          eventType === 'response.output_text.delta' ||
-          eventType === 'response.text.delta' ||
-          eventType === 'response.audio_transcript.delta' ||
-          eventType === 'response.output_audio_transcript.delta'
-        ) {
-          const responseId: string | undefined = payload?.response?.id ?? payload?.response_id;
-          const delta: string =
-            payload?.delta ??
-            payload?.text ??
-            payload?.output_text_delta ??
-            payload?.output_audio_transcript_delta ??
-            '';
-
-          if (!responseId || !delta) {
-            return;
-          }
-
-          const entry = assistantResponsesRef.current.get(responseId);
-          if (!entry) {
-            const index = appendMessage({
-              role: 'assistant',
-              content: delta,
-              timestamp: Date.now(),
-            });
+          if (responseId) {
             assistantResponsesRef.current.set(responseId, { index });
-            return;
           }
+          if (itemId) {
+            assistantItemsRef.current.set(itemId, index);
+          }
+          return index;
+        };
 
-          updateMessageAt(entry.index, (message) => ({
+        const handleAssistantDelta = (delta: string, responseId?: string, itemId?: string) => {
+          if (!delta) return;
+          const index = ensureAssistantEntry(responseId, itemId);
+          if (index === undefined) return;
+          updateMessageAt(index, (message) => ({
             ...message,
             content: (message.content || '') + delta,
             timestamp: Date.now(),
           }));
-          return;
-        }
+        };
 
-        if (eventType === 'response.completed' || eventType === 'response.done') {
-          const responseId: string | undefined = payload?.response?.id ?? payload?.response_id;
-          if (!responseId) {
+        const handleAssistantFinal = (text: string, responseId?: string, itemId?: string) => {
+          const index = ensureAssistantEntry(responseId, itemId);
+          if (index === undefined) return;
+          updateMessageAt(index, (message) => ({
+            ...message,
+            content: text ?? message.content,
+            timestamp: Date.now(),
+          }));
+        };
+
+        switch (eventType) {
+          case 'input_audio_buffer.speech_started':
+            markActiveSpeaker('user');
+            return;
+          case 'response.output_audio_buffer.started':
+          case 'response.audio.started':
+            markActiveSpeaker('assistant');
+            return;
+          case 'session.created':
+            setStatus('active');
+            return;
+          case 'session.error': {
+            const message = payload?.error?.message || 'The realtime session reported an error. Please try again.';
+            setError(message);
             return;
           }
-          const entry = assistantResponsesRef.current.get(responseId);
-          if (entry) {
-            updateMessageAt(entry.index, (message) => ({
-              ...message,
-              timestamp: Date.now(),
-            }));
+          case 'conversation.item.input_audio_transcription.delta': {
+            const transcript: string = (payload?.delta ?? '').trim();
+            if (!transcript) return;
+            const itemId: string | undefined = payload?.item_id;
+            if (!itemId) return;
+            markActiveSpeaker('user');
+            let entry = userItemsRef.current.get(itemId);
+            if (!entry) {
+              const index = appendMessage({
+                role: 'user',
+                content: transcript,
+                timestamp: Date.now(),
+              });
+              userItemsRef.current.set(itemId, { index });
+            } else {
+              updateMessageAt(entry.index, (message) => ({
+                ...message,
+                content: transcript,
+                timestamp: Date.now(),
+              }));
+            }
+            return;
           }
-          return;
-        }
-
-        if (eventType === 'response.error') {
-          console.error('Realtime response error:', payload);
-          return;
+          case 'conversation.item.input_audio_transcription.completed': {
+            const transcript: string = (payload?.transcript ?? '').trim();
+            if (!transcript) return;
+            const itemId: string | undefined = payload?.item_id;
+            if (!itemId) return;
+            markActiveSpeaker('user');
+            let entry = userItemsRef.current.get(itemId);
+            if (!entry) {
+              const index = appendMessage({
+                role: 'user',
+                content: transcript,
+                timestamp: Date.now(),
+              });
+              userItemsRef.current.set(itemId, { index });
+            } else {
+              updateMessageAt(entry.index, (message) => ({
+                ...message,
+                content: transcript,
+                timestamp: Date.now(),
+              }));
+            }
+            return;
+          }
+          case 'conversation.item.created': {
+            const item = payload?.item;
+            if (!item) return;
+            if (item.type === 'message') {
+              if (item.role === 'assistant') {
+                const text = (item.content || [])
+                  .filter((part: any) => part?.type === 'text' && part?.text)
+                  .map((part: any) => part.text)
+                  .join('');
+                ensureAssistantEntry(undefined, item.id, text);
+                if (text) markActiveSpeaker('assistant');
+              } else if (item.role === 'user') {
+                if (userItemsByIdRef.current.has(item.id)) {
+                  return;
+                }
+                const text = (item.content || [])
+                  .filter((part: any) => part?.type === 'text' && part?.text)
+                  .map((part: any) => part.text)
+                  .join('');
+                if (text) {
+                  markActiveSpeaker('user');
+                  const index = appendMessage({
+                    role: 'user',
+                    content: text,
+                    timestamp: Date.now(),
+                  });
+                  userItemsByIdRef.current.set(item.id, index);
+                }
+              }
+            } else if (item.type === 'function_call') {
+              const callId = item.call_id;
+              if (!callId) return;
+              const buffer = functionCallBuffersRef.current.get(callId) || { args: '' };
+              buffer.name = item.name;
+              functionCallBuffersRef.current.set(callId, buffer);
+            }
+            return;
+          }
+          case 'response.output_item.added': {
+            const item = payload?.item;
+            const responseId: string | undefined = payload?.response_id ?? payload?.response?.id;
+            if (!item) return;
+            if (item.type === 'message' && item.role === 'assistant') {
+              const text = (item.content || [])
+                .filter((part: any) => part?.type === 'text' && part?.text)
+                .map((part: any) => part.text)
+                .join('');
+              ensureAssistantEntry(responseId, item.id, text);
+              if (text) markActiveSpeaker('assistant');
+            } else if (item.type === 'function_call') {
+              const callId = item.call_id;
+              if (!callId) return;
+              const buffer = functionCallBuffersRef.current.get(callId) || { args: '' };
+              buffer.name = item.name;
+              functionCallBuffersRef.current.set(callId, buffer);
+            }
+            return;
+          }
+          case 'response.text.delta':
+          case 'response.output_text.delta': {
+            const delta = payload?.delta ?? '';
+            if (!delta) return;
+            markActiveSpeaker('assistant');
+            handleAssistantDelta(delta, payload?.response_id, payload?.item_id);
+            return;
+          }
+          case 'response.text.done':
+          case 'response.output_text.done': {
+            const text = payload?.text ?? '';
+            handleAssistantFinal(text, payload?.response_id, payload?.item_id);
+            return;
+          }
+          case 'response.content_part.added': {
+            const part = payload?.part;
+            if (part?.type === 'text' && part?.text) {
+              markActiveSpeaker('assistant');
+              handleAssistantDelta(part.text, payload?.response_id, payload?.item_id);
+            }
+            return;
+          }
+          case 'response.content_part.done': {
+            const part = payload?.part;
+            if (part?.type === 'text' && part?.text) {
+              handleAssistantFinal(part.text, payload?.response_id, payload?.item_id);
+            }
+            return;
+          }
+          case 'response.audio_transcript.delta':
+          case 'response.output_audio_transcript.delta': {
+            const transcript: string = payload?.delta ?? '';
+            if (!transcript) return;
+            markActiveSpeaker('assistant');
+            handleAssistantDelta(transcript, payload?.response_id, payload?.item_id);
+            return;
+          }
+          case 'response.audio_transcript.done':
+          case 'response.output_audio_transcript.done': {
+            const transcript: string = payload?.transcript ?? '';
+            handleAssistantFinal(transcript, payload?.response_id, payload?.item_id);
+            return;
+          }
+          case 'response.function_call_arguments.delta': {
+            const callId: string | undefined = payload?.call_id;
+            if (!callId) return;
+            const buffer = functionCallBuffersRef.current.get(callId) || { args: '' };
+            buffer.args += payload?.delta ?? '';
+            functionCallBuffersRef.current.set(callId, buffer);
+            return;
+          }
+          case 'response.function_call_arguments.done': {
+            const callId: string | undefined = payload?.call_id;
+            if (!callId) return;
+            const buffer = functionCallBuffersRef.current.get(callId) || { args: '' };
+            if (payload?.arguments) {
+              buffer.args = payload.arguments;
+            }
+            functionCallBuffersRef.current.set(callId, buffer);
+            handleFunctionCall(callId, buffer);
+            return;
+          }
+          case 'response.done': {
+            const responseId: string | undefined = payload?.response?.id ?? payload?.response_id;
+            if (!responseId) return;
+            const entry = assistantResponsesRef.current.get(responseId);
+            if (entry) {
+              updateMessageAt(entry.index, (message) => ({
+                ...message,
+                timestamp: Date.now(),
+              }));
+            }
+            return;
+          }
+          default:
+            return;
         }
       } catch (err) {
         console.error('Failed to process realtime event:', err, event.data);
       }
     },
-    [appendMessage, updateMessageAt]
+    [appendMessage, handleFunctionCall, markActiveSpeaker, updateMessageAt]
   );
 
   const cleanupConnection = useCallback(() => {
@@ -282,7 +755,21 @@ export default function InterviewPage() {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
-  }, []);
+    if (activeSpeakerTimeoutRef.current) {
+      clearTimeout(activeSpeakerTimeoutRef.current);
+      activeSpeakerTimeoutRef.current = null;
+    }
+    setActiveSpeaker(null);
+    stopLevelMonitoring();
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (error) {
+        console.warn('Failed to close audio context:', error);
+      }
+      audioContextRef.current = null;
+    }
+  }, [stopLevelMonitoring]);
 
   const finalizeRecording = useCallback((): Promise<Blob | null> => {
     const recorder = mediaRecorderRef.current;
@@ -333,7 +820,39 @@ export default function InterviewPage() {
       const payload = await safeParseJson(response);
       throw new Error(payload?.error || 'Failed to save interview session');
     }
+
+    return true;
   }, []);
+
+  const resetInterviewState = useCallback(() => {
+    if (activeSpeakerTimeoutRef.current) {
+      clearTimeout(activeSpeakerTimeoutRef.current);
+      activeSpeakerTimeoutRef.current = null;
+    }
+    setMessages([]);
+    messagesRef.current = [];
+    assistantResponsesRef.current.clear();
+    userItemsRef.current.clear();
+    assistantItemsRef.current.clear();
+    userItemsByIdRef.current.clear();
+    functionCallBuffersRef.current.clear();
+    setSessionId(null);
+    sessionIdRef.current = null;
+    setStatus('idle');
+    setError('');
+    setPostSessionInfo(null);
+    setActiveSpeaker(null);
+    setSpeakerLevels({ user: 0, assistant: 0 });
+    stopLevelMonitoring();
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (error) {
+        console.warn('Failed to close audio context:', error);
+      }
+      audioContextRef.current = null;
+    }
+  }, [stopLevelMonitoring]);
 
   const startInterview = useCallback(async () => {
     if (isConnecting || isRecording) {
@@ -348,10 +867,24 @@ export default function InterviewPage() {
     setError('');
     setIsConnecting(true);
     setStatus('connecting');
+    setPostSessionInfo(null);
+    setSessionId(null);
+    setMessages([]);
+    messagesRef.current = [];
+    assistantResponsesRef.current.clear();
+    userItemsRef.current.clear();
+    assistantItemsRef.current.clear();
+    userItemsByIdRef.current.clear();
+    functionCallBuffersRef.current.clear();
 
     try {
+      if (companyId) {
+        loadTopicContext();
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      setupAnalyserForStream(stream, 'user');
 
       const recorder = new MediaRecorder(stream, {
         mimeType: 'audio/webm;codecs=opus',
@@ -398,6 +931,7 @@ export default function InterviewPage() {
         if (audioRef.current && event.streams[0]) {
           audioRef.current.srcObject = event.streams[0];
           audioRef.current.play().catch(() => undefined);
+          setupAnalyserForStream(event.streams[0], 'assistant');
         }
       };
 
@@ -454,7 +988,7 @@ export default function InterviewPage() {
       setStatus('idle');
       cleanupConnection();
     }
-  }, [cleanupConnection, companyId, handleServerEvent, isConnecting, isRecording, sendSessionBootstrap]);
+  }, [cleanupConnection, companyId, handleServerEvent, isConnecting, isRecording, loadTopicContext, sendSessionBootstrap, setupAnalyserForStream]);
 
   const stopInterview = useCallback(async () => {
     if (!sessionIdRef.current) {
@@ -470,19 +1004,42 @@ export default function InterviewPage() {
     try {
       const audioBlob = await finalizeRecording();
       await persistSession(audioBlob);
+      if (sessionIdRef.current) {
+        setPostSessionInfo({
+          sessionId: sessionIdRef.current,
+          companyId,
+        });
+      }
     } catch (err) {
       console.error('Failed to save interview session:', err);
       setError(err instanceof Error ? err.message : 'Failed to save interview session');
     } finally {
       cleanupConnection();
+      sessionIdRef.current = null;
+      setSessionId(null);
     }
-  }, [cleanupConnection, finalizeRecording, persistSession]);
+  }, [cleanupConnection, companyId, finalizeRecording, persistSession]);
 
   useEffect(() => {
     return () => {
       cleanupConnection();
     };
   }, [cleanupConnection]);
+
+  useEffect(() => {
+    const container = transcriptContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (activeSpeakerTimeoutRef.current) {
+        clearTimeout(activeSpeakerTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const statusLabel = useMemo(() => {
     switch (status) {
@@ -496,6 +1053,15 @@ export default function InterviewPage() {
         return 'Idle';
     }
   }, [status]);
+
+  const prioritizedTopics = useMemo(() => {
+    if (!coverageProgress || coverageProgress.length === 0) {
+      return [] as CoverageEntry[];
+    }
+    return [...coverageProgress]
+      .sort((a, b) => a.coverage - b.coverage)
+      .slice(0, 3);
+  }, [coverageProgress]);
 
   return (
     <div className="page-shell space-y-10">
@@ -573,6 +1139,8 @@ export default function InterviewPage() {
             )}
           </div>
 
+          <SpeakerIndicator activeSpeaker={activeSpeaker} levels={speakerLevels} />
+
           {error && (
             <div className="mb-6 rounded-2xl border border-red-200 bg-red-50/80 p-4 text-sm font-medium text-red-700">
               {error}
@@ -581,7 +1149,11 @@ export default function InterviewPage() {
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Live transcript</h2>
-            <div className="space-y-4 overflow-y-auto pr-1" style={{ maxHeight: '24rem' }}>
+            <div
+              ref={transcriptContainerRef}
+              className="space-y-4 overflow-y-auto pr-1"
+              style={{ maxHeight: '24rem' }}
+            >
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-10 text-center text-slate-500">
                   <svg className="h-12 w-12 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -618,6 +1190,31 @@ export default function InterviewPage() {
           </div>
 
           <audio ref={audioRef} style={{ display: 'none' }} />
+
+          {postSessionInfo && (
+            <div className="mt-6 rounded-2xl border border-white/60 bg-white/95 p-6 shadow-lg ring-1 ring-slate-900/10 backdrop-blur">
+              <h3 className="text-lg font-semibold text-slate-900">Interview saved</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                We captured the transcript, audio, and updated coverage metrics. What would you like to do next?
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Link href="/dashboard" className="btn-secondary">
+                  View Dashboard
+                </Link>
+                {postSessionInfo.companyId ? (
+                  <Link href={`/docs/${postSessionInfo.companyId}`} className="btn-secondary">
+                    View Documentation
+                  </Link>
+                ) : null}
+                <button onClick={resetInterviewState} className="btn-primary">
+                  Start Another Interview
+                </button>
+              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                Tip: You can revisit any session later from the dashboard&rsquo;s interview history.
+              </p>
+            </div>
+          )}
         </section>
 
         <aside className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
@@ -625,18 +1222,38 @@ export default function InterviewPage() {
           <p className="mt-1 text-sm text-slate-500">Track how the conversation is filling your priority areas.</p>
 
           <div className="mt-6 space-y-5">
-            <TopicProgress name="Products & Services" coverage={0} confidence={0} />
-            <TopicProgress name="Processes" coverage={0} confidence={0} />
-            <TopicProgress name="Equipment" coverage={0} confidence={0} />
-            <TopicProgress name="Safety" coverage={0} confidence={0} />
+            {coverageLoading ? (
+              <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
+                <div className="h-2 w-2 animate-ping rounded-full bg-indigo-400" />
+                <span>Syncing coverage from recent sessions…</span>
+              </div>
+            ) : coverageProgress.length === 0 ? (
+              <p className="text-sm text-slate-500">Coverage will populate as soon as the first topic is captured.</p>
+            ) : (
+              coverageProgress.slice(0, 6).map((entry) => (
+                <TopicProgress
+                  key={entry.topicId}
+                  name={entry.topicName}
+                  coverage={Math.round(entry.coverage)}
+                  confidence={Math.round(entry.confidence)}
+                />
+              ))
+            )}
           </div>
 
           <div className="mt-8 rounded-2xl border border-slate-200/70 bg-slate-50/70 p-5">
             <h3 className="text-sm font-semibold text-slate-700">Suggested follow-ups</h3>
             <ul className="mt-3 space-y-2 text-sm text-slate-600">
-              <li>- What are the main product lines?</li>
-              <li>- Describe the assembly process.</li>
-              <li>- What equipment is critical?</li>
+              {prioritizedTopics.length === 0 ? (
+                <li>Focus on capturing foundational knowledge for your highest priority topics.</li>
+              ) : (
+                prioritizedTopics.map((topic) => (
+                  <li key={topic.topicId}>
+                    • Explore more about <span className="font-medium text-slate-700">{topic.topicName}</span>&nbsp;
+                    (currently {Math.round(topic.coverage)}% coverage, {Math.round(topic.confidence)}% confidence)
+                  </li>
+                ))
+              )}
             </ul>
           </div>
         </aside>
@@ -646,22 +1263,92 @@ export default function InterviewPage() {
 }
 
 function TopicProgress({ name, coverage, confidence }: { name: string; coverage: number; confidence: number }) {
+  const safeCoverage = Math.max(0, Math.min(100, coverage));
+  const safeConfidence = Math.max(0, Math.min(100, confidence));
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
         <span>{name}</span>
-        <span className="text-slate-400">{coverage}%</span>
+        <span className="text-slate-400">{Math.round(safeCoverage)}%</span>
       </div>
       <div className="h-2 rounded-full bg-slate-200/80">
         <div
           className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500 transition-all duration-500"
-          style={{ width: `${coverage}%` }}
+          style={{ width: `${safeCoverage}%` }}
         />
       </div>
       <div className="text-xs text-slate-400">
-        Confidence: <span className="font-semibold text-slate-600">{confidence}%</span>
+        Confidence: <span className="font-semibold text-slate-600">{Math.round(safeConfidence)}%</span>
       </div>
     </div>
+  );
+}
+
+function SpeakerIndicator({ activeSpeaker, levels }: { activeSpeaker: 'assistant' | 'user' | null; levels: { user: number; assistant: number } }) {
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm text-slate-600 shadow-sm">
+      <span className="font-semibold text-slate-500">Live activity</span>
+      <SpeakerPill label="You" isActive={activeSpeaker === 'user'} accent="user" level={levels.user} />
+      <SpeakerPill label="AI interviewer" isActive={activeSpeaker === 'assistant'} accent="assistant" level={levels.assistant} />
+    </div>
+  );
+}
+
+function SpeakerPill({ label, isActive, accent, level }: { label: string; isActive: boolean; accent: 'assistant' | 'user'; level: number }) {
+  const activeClasses =
+    accent === 'assistant'
+      ? 'bg-indigo-500/90 text-white shadow-lg shadow-indigo-500/30'
+      : 'bg-emerald-500/90 text-white shadow-lg shadow-emerald-500/30';
+  const inactiveClasses = 'bg-slate-100 text-slate-500';
+
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium transition ${
+        isActive ? `${activeClasses} animate-pulse` : inactiveClasses
+      }`}
+    >
+      <span className={`flex items-center gap-1`}>
+        <span
+          className={`h-2.5 w-2.5 rounded-full ${
+            isActive
+              ? accent === 'assistant'
+                ? 'bg-white'
+                : 'bg-white'
+              : 'bg-slate-300'
+          }`}
+        />
+        {label}
+      </span>
+      <LevelBars isActive={isActive} accent={accent} level={level} />
+      {isActive ? <span className="text-xs uppercase tracking-wide">Speaking</span> : null}
+    </span>
+  );
+}
+
+function LevelBars({ isActive, accent, level }: { isActive: boolean; accent: 'assistant' | 'user'; level: number }) {
+  const clamped = Math.max(0, Math.min(1, level));
+  const barColorActive = accent === 'assistant' ? 'bg-white' : 'bg-white';
+  const barColorInactive = 'bg-slate-400';
+  const baseOpacity = isActive ? 1 : 0.5;
+  const bars = [0.35, 0.65, 0.85, 1];
+
+  return (
+    <span className="ml-2 flex items-end gap-1">
+      {bars.map((scale, idx) => {
+        const height = Math.max(4, clamped * 24 * scale);
+        return (
+          <span
+            key={idx}
+            className={`w-1 rounded-full ${isActive ? barColorActive : barColorInactive}`}
+            style={{
+              height,
+              opacity: baseOpacity - idx * 0.1,
+              transition: 'height 120ms ease, opacity 120ms ease',
+            }}
+          />
+        );
+      })}
+    </span>
   );
 }
 
