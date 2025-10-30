@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { interviewSessions } from '@/lib/db/schema';
+import { companies, interviewSessions, topicTrees } from '@/lib/db/schema';
+import { desc, eq } from 'drizzle-orm';
+import { TopicTree } from '@/lib/types';
+
+const REALTIME_API_VERSION = process.env.AZURE_OPENAI_REALTIME_API_VERSION || '2025-04-01-preview';
+const REALTIME_REGION = process.env.AZURE_OPENAI_REALTIME_REGION;
+const REALTIME_DEPLOYMENT = process.env.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME;
+const REALTIME_VOICE = process.env.AZURE_OPENAI_REALTIME_VOICE || 'verse';
+const AZURE_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT?.replace(/\/$/, '');
+const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,41 +22,89 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Fetch company context and latest topic tree (if any)
+    const [companyRecord] = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+
+    const [latestTopicTree] = await db
+      .select()
+      .from(topicTrees)
+      .where(eq(topicTrees.companyId, companyId))
+      .orderBy(desc(topicTrees.createdAt))
+      .limit(1);
+
+    let parsedTopicTree: TopicTree | null = null;
+    if (latestTopicTree) {
+      try {
+        parsedTopicTree = JSON.parse(latestTopicTree.topicData);
+      } catch (error) {
+        console.warn('Failed to parse topic tree for interview instructions:', error);
+      }
+    }
+
     // Create interview session in database
     const now = new Date();
     const [session] = await db.insert(interviewSessions).values({
       companyId,
+      topicTreeId: latestTopicTree?.id ?? null,
       speakerName: speakerName || null,
       startedAt: now,
       status: 'active',
     }).returning();
 
-    // In a real implementation, we would:
-    // 1. Call Azure OpenAI Realtime API to create a session
-    // 2. Return the session token and WebRTC config
-    // 3. Set up the AI instructions for the interviewer agent
-    //
-    // const realtimeResponse = await fetch(
-    //   `${process.env.AZURE_OPENAI_ENDPOINT}/openai/realtime/sessions`,
-    //   {
-    //     method: 'POST',
-    //     headers: {
-    //       'api-key': process.env.AZURE_OPENAI_API_KEY!,
-    //       'Content-Type': 'application/json',
-    //     },
-    //     body: JSON.stringify({
-    //       model: process.env.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME,
-    //       instructions: getInterviewerInstructions(companyId),
-    //     }),
-    //   }
-    // );
+    const azureConfig = validateAzureRealtimeConfig();
+    if (!azureConfig.valid) {
+      await markSessionFailed(session.id);
+      return NextResponse.json(
+        {
+          error: azureConfig.error ?? 'Azure Realtime API environment variables are not configured',
+        },
+        { status: 500 }
+      );
+    }
 
-    // For MVP/demo purposes, return a mock session
+    const interviewInstructions = getInterviewerInstructions(
+      companyRecord?.name ?? 'the company',
+      parsedTopicTree
+    );
+
+    const azureSession = await mintAzureRealtimeSession(interviewInstructions);
+
+    if (!azureSession.ok) {
+      await markSessionFailed(session.id);
+      return NextResponse.json(
+        {
+          error: azureSession.errorMessage ?? 'Failed to create Azure Realtime session',
+        },
+        { status: 502 }
+      );
+    }
+
+    const { payload } = azureSession;
+    const clientSecret = payload?.client_secret?.value;
+    if (!clientSecret) {
+      await markSessionFailed(session.id);
+      return NextResponse.json(
+        { error: 'Azure Realtime session did not return a client secret' },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
       sessionId: session.id,
-      sessionToken: 'mock-token-for-demo',
-      instructions: getInterviewerInstructions(companyId),
+      azureSessionId: payload.id,
+      clientSecret,
+      expiresAt: payload.expires_at ?? null,
+      webrtcUrl: buildWebrtcUrl(),
+      model: REALTIME_DEPLOYMENT,
+      voice: REALTIME_VOICE,
+      instructions: interviewInstructions,
+      topicTreeId: latestTopicTree?.id ?? null,
+      companyName: companyRecord?.name ?? null,
     });
   } catch (error) {
     console.error('Error creating realtime session:', error);
@@ -58,33 +115,110 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function getInterviewerInstructions(companyId: number): string {
-  return `You are an expert knowledge interviewer for Knowledge Harvest.
+function validateAzureRealtimeConfig():
+  | { valid: true }
+  | { valid: false; error: string } {
+  if (!AZURE_ENDPOINT) {
+    return { valid: false, error: 'AZURE_OPENAI_ENDPOINT is not configured' };
+  }
+  if (!AZURE_API_KEY) {
+    return { valid: false, error: 'AZURE_OPENAI_API_KEY is not configured' };
+  }
+  if (!REALTIME_DEPLOYMENT) {
+    return { valid: false, error: 'AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME is not configured' };
+  }
+  if (!REALTIME_REGION) {
+    return { valid: false, error: 'AZURE_OPENAI_REALTIME_REGION is not configured' };
+  }
+  return { valid: true };
+}
 
-Your role:
-- Conduct a friendly, conversational interview to capture tacit knowledge from experienced employees
-- Ask open-ended questions about processes, procedures, equipment, safety protocols, and best practices
-- Listen actively and ask follow-up questions to get specific details (measurements, timings, materials, etc.)
-- Confirm critical information by repeating it back
-- Keep the conversation flowing naturally - don't interrogate
-- Track which topics have been covered and which still need attention
+async function mintAzureRealtimeSession(instructions: string) {
+  if (!AZURE_ENDPOINT || !AZURE_API_KEY || !REALTIME_DEPLOYMENT) {
+    return { ok: false, errorMessage: 'Azure realtime API not configured' } as const;
+  }
+
+  const sessionsUrl = `${AZURE_ENDPOINT}/openai/realtimeapi/sessions?api-version=${encodeURIComponent(
+    REALTIME_API_VERSION
+  )}`;
+
+  try {
+    const response = await fetch(sessionsUrl, {
+      method: 'POST',
+      headers: {
+        'api-key': AZURE_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: REALTIME_DEPLOYMENT,
+        voice: REALTIME_VOICE,
+        modalities: ['text', 'audio'],
+        instructions,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Azure Realtime session error:', response.status, errorText);
+      return {
+        ok: false,
+        errorMessage: `Azure Realtime API responded with status ${response.status}`,
+      } as const;
+    }
+
+    const payload = await response.json();
+    return { ok: true, payload } as const;
+  } catch (error) {
+    console.error('Azure Realtime session request failed:', error);
+    return { ok: false, errorMessage: 'Failed to reach Azure Realtime API' } as const;
+  }
+}
+
+function buildWebrtcUrl() {
+  if (!REALTIME_REGION) {
+    throw new Error('AZURE_OPENAI_REALTIME_REGION is not configured');
+  }
+  return `https://${REALTIME_REGION}.realtimeapi-preview.ai.azure.com/v1/realtimertc`;
+}
+
+async function markSessionFailed(sessionId: number) {
+  try {
+    await db
+      .update(interviewSessions)
+      .set({ status: 'failed', endedAt: new Date() })
+      .where(eq(interviewSessions.id, sessionId));
+  } catch (error) {
+    console.error('Failed to mark interview session as failed', error);
+  }
+}
+
+function getInterviewerInstructions(companyName: string, topicTree: TopicTree | null): string {
+  const topicSummary = topicTree
+    ? topicTree.topics
+        .slice(0, 8)
+        .map((topic) => `- ${topic.name}`)
+        .join('\n')
+    : null;
+
+  return `You are an expert knowledge interviewer for Knowledge Harvest working with ${companyName}.
+
+Your goals:
+- Capture tacit knowledge about processes, equipment, safety, troubleshooting, and best practices.
+- Ask open-ended questions, listen actively, and request specific details (measurements, timings, materials).
+- Confirm critical information by repeating it back and summarising key points.
+- Maintain a warm, respectful tone that helps experts feel valued.
 
 Interview structure:
-1. Start with a warm greeting and ask for their name and role
-2. Explain that you're here to capture their valuable expertise
-3. Ask about their main responsibilities and the topics they know best
-4. For each topic, dig into:
+1. Greet the expert, confirm their name and role, and explain that the goal is to preserve their knowledge.
+2. Explore their core responsibilities and the systems or product areas they know best.
+3. For each focus area, cover:
    - Step-by-step procedures
-   - Common problems and solutions
-   - Critical parameters (tolerances, timings, materials)
-   - Safety considerations
-   - Tips and tricks they've learned over the years
-5. When you sense a topic is complete, transition smoothly to the next one
-6. End by thanking them and summarizing what was covered
+   - Typical parameters, tolerances, and required tools
+   - Common problems and resolutions
+   - Safety and compliance considerations
+   - Tips, checklists, or heuristics they rely on
+4. When a topic feels complete, summarise what you heard before moving on.
+5. Close by thanking them and summarising the coverage.
 
-Tools available:
-- update_coverage(topic_id, questions_answered, confidence) - Update topic coverage metrics
-- extract_knowledge_atom(topic_id, type, title, content) - Save a specific piece of knowledge
-
-Remember: You're talking to someone who has valuable expertise. Make them feel heard and appreciated.`;
+${topicSummary ? `Focus first on these topic areas:\n${topicSummary}\n\n` : ''}Remember: you are collaborating with a seasoned expert. Keep the conversation natural, empathetic, and efficient.`;
 }

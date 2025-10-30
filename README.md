@@ -17,7 +17,6 @@ AI-powered platform to convert senior employees' tacit know-how into searchable,
 
 ### 🚧 In Progress
 
-- **Voice Interviews**: WebRTC structure ready, Azure Realtime API integration pending
 - **Azure Speech Integration**: Enhanced transcription with speaker diarization
 
 ## Tech Stack
@@ -55,6 +54,9 @@ AZURE_OPENAI_API_KEY=your_key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
 AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME=gpt-4o-realtime-preview
+AZURE_OPENAI_REALTIME_REGION=eastus2
+AZURE_OPENAI_REALTIME_API_VERSION=2025-04-01-preview
+AZURE_OPENAI_REALTIME_VOICE=verse
 AZURE_SPEECH_KEY=your_speech_key
 AZURE_SPEECH_REGION=japaneast
 ```
@@ -84,21 +86,21 @@ npm run dev
 4. AI generates structured knowledge taxonomy
 5. Company context is automatically set
 
-**Step 2: Conduct Interview** (Currently uses mock data)
+**Step 2: Conduct Interview** (Realtime voice + GPT co-pilot)
 1. Go to Interview page (`/interview`)
 2. Click "Start Interview"
-3. Allow microphone access
-4. Conduct interview (mock conversation for now)
-5. Click "Stop Interview" to save
+3. Allow microphone access when prompted
+4. Speak naturally — audio streams to Azure Realtime GPT which drives the conversation, displays live transcript, and returns synthesized audio
+5. Click "Stop Interview" to finish. Audio, transcript, knowledge extraction, and coverage updates run automatically (audio files are stored under `data/interviews/`).
 
-**Step 3: Extract Knowledge** (API call required)
+**Step 3: Extract Knowledge** (Optional manual re-run)
 ```bash
 curl -X POST http://localhost:3001/api/knowledge/extract \
   -H "Content-Type: application/json" \
   -d '{"sessionId": 1}'
 ```
 
-**Step 4: Calculate Coverage** (API call required)
+**Step 4: Calculate Coverage** (Optional manual re-run)
 ```bash
 curl -X POST http://localhost:3001/api/coverage/calculate \
   -H "Content-Type: application/json" \
@@ -127,11 +129,11 @@ Returns: { success, topicTree, companyId }
 ```
 POST /api/realtime/session
 Body: { companyId }
-Returns: { sessionId, sessionToken, instructions }
+Returns: { sessionId, clientSecret, webrtcUrl, model, voice, instructions }
 
 POST /api/interview/end
-Body: { sessionId, messages }
-Returns: { success, sessionId }
+Body: multipart/form-data → sessionId, messages (JSON), audio (binary)
+Returns: { success, sessionId, audioUrl }
 ```
 
 **Knowledge Processing**
