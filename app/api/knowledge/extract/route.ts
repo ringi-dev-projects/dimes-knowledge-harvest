@@ -5,12 +5,23 @@ import { interviewSessions, qaTurns, knowledgeAtoms, topicTrees } from '@/lib/db
 import { eq } from 'drizzle-orm';
 import { TopicTree } from '@/lib/types';
 
-const client = new AzureOpenAI({
-  apiKey: process.env.AZURE_OPENAI_API_KEY,
-  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-  apiVersion: process.env.AZURE_OPENAI_API_VERSION,
-  deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-});
+function getOpenAIClient() {
+  const apiKey = process.env.AZURE_OPENAI_API_KEY;
+  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  const apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+
+  if (!apiKey || !endpoint || !apiVersion || !deployment) {
+    return null;
+  }
+
+  return new AzureOpenAI({
+    apiKey,
+    endpoint,
+    apiVersion,
+    deployment,
+  });
+}
 
 interface KnowledgeAtom {
   topicId: string;
@@ -99,6 +110,14 @@ export async function POST(request: NextRequest) {
       .join('\n\n');
 
     // Extract knowledge using Azure OpenAI
+    const client = getOpenAIClient();
+    if (!client) {
+      console.warn('Azure OpenAI configuration is missing; skipping knowledge extraction.');
+      return NextResponse.json(
+        { error: 'Azure OpenAI is not configured.' },
+        { status: 500 }
+      );
+    }
     const systemPrompt = `You are an expert at extracting structured knowledge from interview transcripts.
 Your task is to analyze the interview and extract discrete knowledge atoms.
 

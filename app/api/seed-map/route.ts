@@ -6,12 +6,23 @@ import { TopicTree } from '@/lib/types';
 import * as cheerio from 'cheerio';
 import { eq } from 'drizzle-orm';
 
-const client = new AzureOpenAI({
-  apiKey: process.env.AZURE_OPENAI_API_KEY,
-  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-  apiVersion: process.env.AZURE_OPENAI_API_VERSION,
-  deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-});
+function getOpenAIClient() {
+  const apiKey = process.env.AZURE_OPENAI_API_KEY;
+  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  const apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+
+  if (!apiKey || !endpoint || !apiVersion || !deployment) {
+    return null;
+  }
+
+  return new AzureOpenAI({
+    apiKey,
+    endpoint,
+    apiVersion,
+    deployment,
+  });
+}
 
 async function fetchWebsiteContent(url: string): Promise<string> {
   try {
@@ -172,6 +183,13 @@ Return ONLY valid JSON in this exact format:
 Return the topic tree now.`;
 
     // Call Azure OpenAI with structured outputs
+    const client = getOpenAIClient();
+    if (!client) {
+      return NextResponse.json(
+        { error: 'Azure OpenAI is not configured.' },
+        { status: 500 }
+      );
+    }
     const response = await client.chat.completions.create({
       model: process.env.AZURE_OPENAI_DEPLOYMENT_NAME || 'gpt-4',
       messages: [
