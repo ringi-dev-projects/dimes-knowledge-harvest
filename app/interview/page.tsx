@@ -77,6 +77,7 @@ export default function InterviewPage() {
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [error, setError] = useState('');
@@ -760,6 +761,7 @@ export default function InterviewPage() {
       activeSpeakerTimeoutRef.current = null;
     }
     setActiveSpeaker(null);
+    setStopPending(false);
     stopLevelMonitoring();
     if (audioContextRef.current) {
       try {
@@ -844,6 +846,7 @@ export default function InterviewPage() {
     setActiveSpeaker(null);
     setSpeakerLevels({ user: 0, assistant: 0 });
     stopLevelMonitoring();
+    setStopPending(false);
     if (audioContextRef.current) {
       try {
         audioContextRef.current.close();
@@ -869,6 +872,7 @@ export default function InterviewPage() {
     setStatus('connecting');
     setPostSessionInfo(null);
     setSessionId(null);
+    setStopPending(false);
     setMessages([]);
     messagesRef.current = [];
     assistantResponsesRef.current.clear();
@@ -998,6 +1002,7 @@ export default function InterviewPage() {
       return;
     }
 
+    setStopPending(true);
     setIsRecording(false);
     setStatus('ended');
 
@@ -1017,6 +1022,7 @@ export default function InterviewPage() {
       cleanupConnection();
       sessionIdRef.current = null;
       setSessionId(null);
+      setStopPending(false);
     }
   }, [cleanupConnection, companyId, finalizeRecording, persistSession]);
 
@@ -1118,8 +1124,18 @@ export default function InterviewPage() {
             </div>
 
             {isRecording ? (
-              <button onClick={stopInterview} className="btn-danger">
-                Stop interview
+              <button
+                onClick={stopInterview}
+                className="btn-danger"
+                disabled={stopPending}
+              >
+                {stopPending ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner /> Stopping…
+                  </span>
+                ) : (
+                  'Stop interview'
+                )}
               </button>
             ) : (
               <button
@@ -1127,14 +1143,22 @@ export default function InterviewPage() {
                 className="btn-primary"
                 disabled={isConnecting || !companyId}
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
-                  />
-                </svg>
-                Start interview
+                {isConnecting ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner /> Starting…
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+                      />
+                    </svg>
+                    Start interview
+                  </span>
+                )}
               </button>
             )}
           </div>
@@ -1259,6 +1283,31 @@ export default function InterviewPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      className="h-4 w-4 animate-spin text-white"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      ></circle>
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+      ></path>
+    </svg>
   );
 }
 

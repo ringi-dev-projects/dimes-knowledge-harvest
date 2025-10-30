@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { companies, topicTrees } from '@/lib/db/schema';
 import { TopicTree } from '@/lib/types';
 import * as cheerio from 'cheerio';
+import { eq } from 'drizzle-orm';
 
 const client = new AzureOpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY,
@@ -43,11 +44,58 @@ async function fetchWebsiteContent(url: string): Promise<string> {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, companyName, description } = await request.json();
+    const {
+      url,
+      companyName,
+      description,
+      focusArea,
+      companyId: incomingCompanyId,
+      mode = 'new',
+      existingTopicTree,
+    } = await request.json();
 
-    if (!companyName || !description) {
+    const trimmedDescription = (description || '').trim();
+    const trimmedFocusArea = (focusArea || '').trim();
+
+    if (!trimmedDescription) {
       return NextResponse.json(
-        { error: 'Company name and description are required' },
+        { error: 'A short description is required to tailor the topic map.' },
+        { status: 400 }
+      );
+    }
+
+    let resolvedCompanyId: number | null = null;
+    let resolvedCompanyName = (companyName || '').trim();
+    let resolvedUrl = (url || '').trim();
+    let existingCompanyRecord: typeof companies.$inferSelect | null = null;
+
+    if (incomingCompanyId) {
+      const [existingCompany] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.id, incomingCompanyId))
+        .limit(1);
+
+      if (!existingCompany) {
+        return NextResponse.json(
+          { error: 'Unable to find the existing company record. Refresh and try again.' },
+          { status: 404 }
+        );
+      }
+
+      existingCompanyRecord = existingCompany;
+      resolvedCompanyId = existingCompany.id;
+      if (!resolvedCompanyName) {
+        resolvedCompanyName = existingCompany.name;
+      }
+      if (!resolvedUrl) {
+        resolvedUrl = existingCompany.url ?? '';
+      }
+    }
+
+    if (!resolvedCompanyName) {
+      return NextResponse.json(
+        { error: 'Company name is required to seed a topic tree.' },
         { status: 400 }
       );
     }
@@ -59,21 +107,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Create prompt for topic tree generation
-    const systemPrompt = `You are an expert at analyzing companies and creating comprehensive knowledge taxonomies.
-Your task is to generate a structured topic tree that captures all the critical knowledge areas for this organization.
+    let existingTopicsSnippet = '';
+    if (existingTopicTree && typeof existingTopicTree === 'object') {
+      try {
+        existingTopicsSnippet = JSON.stringify(
+          {
+            topics: (existingTopicTree as TopicTree).topics?.slice(0, 6),
+          },
+          null,
+          2
+        ).slice(0, 4000);
+      } catch (error) {
+        console.warn('Failed to serialize existing topic tree snippet:', error);
+      }
+    }
 
-Focus on these main categories as appropriate:
-- Products/Services
-- Processes and Procedures
-- Equipment and Tools
-- Suppliers and Vendors
-- Safety and Compliance
-- Troubleshooting
-- Quality Control
-- Onboarding
-
-For each topic, create specific, actionable target questions that an expert should be able to answer.
-Mark critical questions as required=true.
+    const systemPrompt = `You are a knowledge graph architect generating a compact, interview-ready topic tree for ${resolvedCompanyName}.
+Keep the structure lean:
+- Aim for 4 to 6 primary topics.
+- Each topic may include up to 3 subtopics (children) only where they add clarity.
+- Provide 2-3 target questions per topic and mark critical ones with required=true.
+- Use weight values from 1-5 to signal priority (5 = highest).
+- Avoid duplicating topics that already exist; refine or extend them with sharper prompts instead.
+${mode === 'extend' && existingTopicsSnippet ? `\nExisting topic structure (for reference only, do not repeat verbatim):\n${existingTopicsSnippet}\n` : ''}
 
 Return ONLY valid JSON in this exact format:
 {
@@ -92,13 +148,23 @@ Return ONLY valid JSON in this exact format:
   ]
 }`;
 
-    const userPrompt = `Company: ${companyName}
+    const userPromptLines = [
+      `Company: ${resolvedCompanyName}`,
+      trimmedDescription ? `Description: ${trimmedDescription}` : null,
+      trimmedFocusArea
+        ? `Priority focus area: ${trimmedFocusArea} (emphasize this while keeping the structure balanced)`
+        : null,
+      websiteContent ? `Website Content:\n${websiteContent}\n` : null,
+      mode === 'extend' && existingTopicsSnippet
+        ? 'Please extend or refine the existing map with a concise set of new topics or sharper prompts.'
+        : 'Please generate a fresh, concise topic tree to kick off interviews.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
-Description: ${description}
+    const userPrompt = `${userPromptLines}
 
-${websiteContent ? `Website Content:\n${websiteContent}\n` : ''}
-
-Generate a comprehensive topic tree for capturing this organization's knowledge.`;
+Return the topic tree now.`;
 
     // Call Azure OpenAI with structured outputs
     const response = await client.chat.completions.create({
@@ -108,8 +174,8 @@ Generate a comprehensive topic tree for capturing this organization's knowledge.
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.7,
-      max_tokens: 2000,
+      temperature: 0.5,
+      max_tokens: 1500,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -139,15 +205,31 @@ Generate a comprehensive topic tree for capturing this organization's knowledge.
     // Store in database
     const now = new Date();
 
-    const [company] = await db.insert(companies).values({
-      name: companyName,
-      url: url || null,
-      description,
-      createdAt: now,
-    }).returning();
+    if (existingCompanyRecord) {
+      await db
+        .update(companies)
+        .set({
+          name: resolvedCompanyName,
+          url: resolvedUrl || existingCompanyRecord.url,
+          description: trimmedDescription || existingCompanyRecord.description,
+        })
+        .where(eq(companies.id, existingCompanyRecord.id));
+      resolvedCompanyId = existingCompanyRecord.id;
+    } else {
+      const [company] = await db
+        .insert(companies)
+        .values({
+          name: resolvedCompanyName,
+          url: resolvedUrl || null,
+          description: trimmedDescription,
+          createdAt: now,
+        })
+        .returning();
+      resolvedCompanyId = company.id;
+    }
 
     await db.insert(topicTrees).values({
-      companyId: company.id,
+      companyId: resolvedCompanyId!,
       topicData: JSON.stringify(topicTree),
       createdAt: now,
     });
@@ -155,7 +237,7 @@ Generate a comprehensive topic tree for capturing this organization's knowledge.
     return NextResponse.json({
       success: true,
       topicTree,
-      companyId: company.id,
+      companyId: resolvedCompanyId,
     });
   } catch (error) {
     console.error('Error generating topic tree:', error);
