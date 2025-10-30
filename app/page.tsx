@@ -98,7 +98,7 @@ export default function Home() {
         ))}
       </section>
 
-      <section className="rounded-3xl border border-white/60 bg-white/90 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur lg:p-12">
+      <section className="section-surface p-8 lg:p-12">
         <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
           <div className="space-y-6">
             <span className="badge-soft">{howItWorks.badge}</span>

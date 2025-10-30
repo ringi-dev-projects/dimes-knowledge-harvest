@@ -1071,7 +1071,7 @@ export default function InterviewPage() {
 
   return (
     <div className="page-shell space-y-10">
-      <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+      <section className="section-surface p-8">
         <div className="flex flex-col gap-4">
           <span className="badge-soft">{tInterview.hero.badge}</span>
           <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">{tInterview.hero.title}</h1>
@@ -1099,7 +1099,7 @@ export default function InterviewPage() {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[1.65fr_1fr]">
-        <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+        <section className="section-surface p-8">
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               {isRecording ? (
@@ -1236,7 +1236,7 @@ export default function InterviewPage() {
           )}
         </section>
 
-        <aside className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+        <aside className="section-surface p-8">
           <h2 className="text-lg font-semibold text-slate-900">{tInterview.coverage.title}</h2>
           <p className="mt-1 text-sm text-slate-500">{tInterview.coverage.subtitle}</p>
 

@@ -155,7 +155,7 @@ export default function DashboardPage() {
 
   return (
     <div className="page-shell space-y-10">
-      <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+      <section className="section-surface p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
             <span className="badge-soft">{tDash.hero.badge}</span>
@@ -238,7 +238,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-white/60 bg-white/95 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+      <section className="section-surface">
         <div className="flex items-center justify-between gap-3 border-b border-white/80 px-6 py-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{coverageText.title}</h2>
@@ -279,7 +279,7 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+      <section className="section-surface p-8">
         <div className="flex flex-col gap-4 border-b border-white/80 pb-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{interviewsText.title}</h2>

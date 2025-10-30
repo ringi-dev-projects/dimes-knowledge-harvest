@@ -401,7 +401,7 @@ export default function SeedPage() {
   return (
     <div className="page-shell space-y-6">
       <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
-        <section className="flex flex-col gap-4 rounded-3xl border border-white/60 bg-white p-5 shadow-md ring-1 ring-slate-900/10">
+        <section className="section-surface flex flex-col gap-4 p-5 shadow-md">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">{seedCopy.title}</h1>
@@ -431,7 +431,7 @@ export default function SeedPage() {
           </div>
         </section>
 
-        <section className="relative flex flex-col rounded-3xl border border-white/60 bg-white p-0 shadow-xl ring-1 ring-slate-900/10">
+        <section className="section-surface relative flex flex-col p-0">
           <div className="flex min-h-[460px] flex-1 flex-col rounded-3xl bg-gradient-to-br from-slate-950/92 via-slate-900/88 to-slate-800/85 p-6 text-slate-100">
             <div className="text-sm font-semibold uppercase tracking-[0.35em] text-slate-400">
               {seedCopy.assistantLabel}
@@ -516,7 +516,7 @@ export default function SeedPage() {
       </div>
 
       {topicTree ? (
-        <section className="rounded-3xl border border-white/60 bg-white/95 p-8 shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
+        <section className="section-surface p-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <span className="badge-soft">{seedCopy.results.badge}</span>

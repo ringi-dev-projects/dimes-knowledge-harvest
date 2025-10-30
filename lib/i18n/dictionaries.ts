@@ -16,6 +16,7 @@ const en = {
     brand: {
       name: 'Knowledge Harvest',
       tagline: 'Capture and scale expert know-how',
+      credit: 'A project by Dimes株式会社',
     },
     duration: {
       placeholder: '—',
@@ -343,6 +344,7 @@ const ja: typeof en = {
     brand: {
       name: 'ナレッジ・ハーベスト',
       tagline: '現場の知見を収集して共有する',
+      credit: 'Dimes株式会社によるプロジェクト',
     },
     duration: {
       placeholder: '—',

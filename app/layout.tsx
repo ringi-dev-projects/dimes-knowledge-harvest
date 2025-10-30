@@ -6,6 +6,7 @@ import { CompanyProvider } from "@/lib/context/CompanyContext";
 import { LocaleProvider } from "@/lib/context/LocaleContext";
 import { resolveLocale } from "@/lib/i18n/dictionaries";
 import { AppHeader } from "@/components/AppHeader";
+import { AppFooter } from "@/components/AppFooter";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -17,12 +18,12 @@ export const metadata: Metadata = {
   description: "AI-powered platform to convert senior employees' know-how into searchable knowledge",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const cookieLocale = cookieStore.get("locale")?.value;
   const initialLocale = resolveLocale(cookieLocale);
 
@@ -33,6 +34,7 @@ export default function RootLayout({
           <CompanyProvider>
             <AppHeader />
             <main className="relative z-0 pb-16 sm:pb-20">{children}</main>
+            <AppFooter />
           </CompanyProvider>
         </LocaleProvider>
       </body>
