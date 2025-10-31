@@ -49,6 +49,52 @@ In Vercel dashboard → Settings → Environment Variables, add:
 **Database:**
 - `DATABASE_URL` - For Vercel, use `/tmp/knowledge-harvest.db` (note: ephemeral) or use Vercel Postgres
 
+### Step 3.1: Sync Variables with `vercel.json`
+
+The project ships with `vercel.json` that references each variable as a Vercel secret (for example `@azure-openai-api-key`). If those secrets are missing you will see build errors such as:
+
+```
+Environment Variable "AZURE_OPENAI_API_KEY" references Secret "azure-openai-api-key", which does not exist.
+```
+
+To fix this, make sure every variable above exists for **Production**, **Preview**, and **Development**. You can do this either in the Vercel dashboard (toggle each environment scope) or via the Vercel CLI:
+
+```bash
+# Run once per variable (you will be prompted for its value)
+vercel env add AZURE_OPENAI_API_KEY production
+vercel env add AZURE_OPENAI_ENDPOINT production
+vercel env add AZURE_OPENAI_DEPLOYMENT_NAME production
+vercel env add AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME production
+vercel env add AZURE_OPENAI_API_VERSION production
+vercel env add AZURE_SPEECH_KEY production
+vercel env add AZURE_SPEECH_REGION production
+vercel env add AZURE_STORAGE_CONNECTION_STRING production
+vercel env add AZURE_STORAGE_CONTAINER_NAME production
+vercel env add AZURE_SEARCH_ENDPOINT production
+vercel env add AZURE_SEARCH_API_KEY production
+vercel env add AZURE_SEARCH_INDEX_NAME production
+vercel env add DATABASE_URL production
+vercel env add NEXT_PUBLIC_APP_URL production
+
+# Repeat for preview and development environments as needed
+vercel env add AZURE_OPENAI_API_KEY preview
+# ...continue for the rest of the variables
+```
+
+After adding the values, pull them locally so that `.env.local` stays in sync:
+
+```bash
+vercel env pull .env.vercel
+```
+
+Finally, commit the updated `vercel.json` and deploy:
+
+```bash
+git add vercel.json docs
+git commit -m "Sync Vercel deployment docs"
+vercel --prod
+```
+
 ### Step 4: Deploy
 
 Click "Deploy" - Vercel will build and deploy automatically.

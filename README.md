@@ -218,7 +218,7 @@ Returns: File download
 
 1. Push code to GitHub
 2. Connect repo to Vercel
-3. Add environment variables in Vercel dashboard
+3. Add environment variables in Vercel dashboard (or run `vercel env add ...` so the secrets referenced in `vercel.json` exist)
 4. Deploy!
 
 **Note**: For production with SQLite, consider:

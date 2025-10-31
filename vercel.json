@@ -17,6 +17,7 @@
     "AZURE_STORAGE_CONTAINER_NAME": "@azure-storage-container-name",
     "AZURE_SEARCH_ENDPOINT": "@azure-search-endpoint",
     "AZURE_SEARCH_API_KEY": "@azure-search-api-key",
-    "AZURE_SEARCH_INDEX_NAME": "@azure-search-index-name"
+    "AZURE_SEARCH_INDEX_NAME": "@azure-search-index-name",
+    "NEXT_PUBLIC_APP_URL": "@next-public-app-url"
   }
 }

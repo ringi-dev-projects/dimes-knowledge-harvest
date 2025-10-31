@@ -166,6 +166,7 @@ npm run build
 1. **Missing environment variables**
    - Go to Vercel Dashboard → Settings → Environment Variables
    - Add all variables from `.env.example`
+   - If you see an error such as `Environment Variable "AZURE_OPENAI_API_KEY" references Secret "azure-openai-api-key", which does not exist.`, create the secret with `vercel env add AZURE_OPENAI_API_KEY production` (and repeat for preview/development).
 
 2. **Build errors**
    - Check Vercel build logs
