@@ -1,70 +1,70 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { pgTable, serial, text, integer, real, timestamp } from 'drizzle-orm/pg-core';
 
-export const companies = sqliteTable('companies', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const companies = pgTable('companies', {
+  id: serial('id').primaryKey(),
   name: text('name').notNull(),
   url: text('url'),
   description: text('description'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const topicTrees = sqliteTable('topic_trees', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  companyId: integer('company_id').notNull().references(() => companies.id),
-  topicData: text('topic_data').notNull(), // JSON stringified topic tree
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+export const topicTrees = pgTable('topic_trees', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  topicData: text('topic_data').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const interviewSessions = sqliteTable('interview_sessions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  companyId: integer('company_id').notNull().references(() => companies.id),
-  topicTreeId: integer('topic_tree_id').references(() => topicTrees.id),
+export const interviewSessions = pgTable('interview_sessions', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  topicTreeId: integer('topic_tree_id').references(() => topicTrees.id, { onDelete: 'set null' }),
   speakerName: text('speaker_name'),
-  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
-  endedAt: integer('ended_at', { mode: 'timestamp' }),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
   audioUrl: text('audio_url'),
   transcript: text('transcript'),
-  status: text('status').notNull(), // 'active', 'completed', 'failed'
+  status: text('status').notNull(),
 });
 
-export const qaTurns = sqliteTable('qa_turns', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  sessionId: integer('session_id').notNull().references(() => interviewSessions.id),
+export const qaTurns = pgTable('qa_turns', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('session_id').notNull().references(() => interviewSessions.id, { onDelete: 'cascade' }),
   topicId: text('topic_id'),
   question: text('question').notNull(),
   answer: text('answer').notNull(),
-  timestamp: integer('timestamp', { mode: 'timestamp' }).notNull(),
+  timestamp: timestamp('timestamp', { withTimezone: true }).notNull(),
   speakerLabel: text('speaker_label'),
 });
 
-export const knowledgeAtoms = sqliteTable('knowledge_atoms', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  sessionId: integer('session_id').notNull().references(() => interviewSessions.id),
+export const knowledgeAtoms = pgTable('knowledge_atoms', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('session_id').notNull().references(() => interviewSessions.id, { onDelete: 'cascade' }),
   topicId: text('topic_id').notNull(),
-  type: text('type').notNull(), // 'procedure', 'parameter', 'risk', 'vendor', 'troubleshooting'
+  type: text('type').notNull(),
   title: text('title').notNull(),
-  content: text('content').notNull(), // JSON stringified content (steps, values, etc.)
-  sourceSpan: text('source_span'), // e.g., "00:03:11-00:05:04"
+  content: text('content').notNull(),
+  sourceSpan: text('source_span'),
   confidence: real('confidence'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const coverageScores = sqliteTable('coverage_scores', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  companyId: integer('company_id').notNull().references(() => companies.id),
+export const coverageScores = pgTable('coverage_scores', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   topicId: text('topic_id').notNull(),
   targetQuestions: integer('target_questions').notNull(),
   answeredQuestions: integer('answered_questions').notNull(),
   confidence: real('confidence').notNull(),
-  lastUpdated: integer('last_updated', { mode: 'timestamp' }).notNull(),
+  lastUpdated: timestamp('last_updated', { withTimezone: true }).notNull(),
 });
 
-export const exportJobs = sqliteTable('export_jobs', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  companyId: integer('company_id').notNull().references(() => companies.id),
-  format: text('format').notNull(), // 'notion', 'docx', 'html'
-  status: text('status').notNull(), // 'pending', 'completed', 'failed'
+export const exportJobs = pgTable('export_jobs', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  format: text('format').notNull(),
+  status: text('status').notNull(),
   outputUrl: text('output_url'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
 });

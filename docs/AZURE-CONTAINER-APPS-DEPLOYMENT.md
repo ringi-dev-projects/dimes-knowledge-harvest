@@ -484,7 +484,7 @@ az containerapp update \
   --set-env-vars "DATABASE_URL=postgresql://dbadmin:YourPassword123!@kh-postgres.postgres.database.azure.com:5432/knowledge_harvest?sslmode=require"
 ```
 
-Update `lib/db/index.ts` to use `pg` instead of `better-sqlite3`.
+Ensure `lib/db/index.ts` uses the Postgres driver (`postgres`) so the app connects to the managed database.
 
 ### Option 3: Azure Cosmos DB (for global scale)
 Best for multi-region deployments.

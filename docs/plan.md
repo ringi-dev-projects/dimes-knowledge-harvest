@@ -1,6 +1,6 @@
 Knowledge Harvest MVP - Demo-Ready PoC Plan
 
-🎯 Target: Vercel deployment with SQLite, live voice interviews, and in-app documentation viewer
+🎯 Target: Vercel deployment with Postgres (Neon), live voice interviews, and in-app documentation viewer
 
 ---
 Phase 1: Project Scaffolding (Foundation)
@@ -8,11 +8,11 @@ Phase 1: Project Scaffolding (Foundation)
 1. Initialize Next.js 14 with TypeScript - App Router, Tailwind CSS
 2. Install core dependencies:
 - Azure SDK (@azure/openai, @azure/ai-speech, @azure/storage-blob)
-- Database (better-sqlite3, drizzle-orm for type-safe queries)
+- Database (Vercel Postgres via `postgres` + drizzle-orm for type-safe queries)
 - Document generation (docx, html templates)
 - UI components (shadcn/ui for quick, polished UI)
 3. Environment setup - .env.local template with Azure keys
-4. Database schema - SQLite with tables: companies, topics, interviews, qa_turns, knowledge_atoms, coverage_scores
+4. Database schema - Postgres with tables: companies, topics, interviews, qa_turns, knowledge_atoms, coverage_scores
 
 ---
 Phase 2: Seed & Topic Generation

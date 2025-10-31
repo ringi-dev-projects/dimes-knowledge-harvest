@@ -47,7 +47,8 @@ In Vercel dashboard → Settings → Environment Variables, add:
 - `AZURE_SEARCH_INDEX_NAME` - Index name (e.g., `knowledge-harvest`)
 
 **Database:**
-- `DATABASE_URL` - For Vercel, use `/tmp/knowledge-harvest.db` (note: ephemeral) or use Vercel Postgres
+- `DATABASE_URL` - Paste the `postgresql://...sslmode=require` string from Vercel Postgres (Neon)
+- `DATABASE_URL_UNPOOLED` (optional) - Use the non-pooled URL when running migrations locally
 
 > ⚠️ If you see an error like `Environment Variable "AZURE_OPENAI_API_KEY" references Secret "azure-openai-api-key", which does not exist.`, double-check that the variable exists under Project → Settings → Environment Variables for the Production, Preview, and Development targets. Vercel only injects variables that are scoped to the environment being deployed.
 
@@ -66,21 +67,19 @@ Click "Deploy" - Vercel will build and deploy automatically.
 
 ## Database Considerations for Production
 
-**Current Setup:** SQLite (ephemeral on Vercel serverless)
+**Current Setup:** Vercel Postgres (serverless Neon)
 
-### Option 1: Vercel Postgres (Recommended for production)
+### Provision a Database
 ```bash
 vercel postgres create
+vercel link
+vercel env pull .env.vercel
 ```
-Then update `DATABASE_URL` in environment variables.
+Then copy the `DATABASE_URL` (and optionally `DATABASE_URL_UNPOOLED`) into the Production/Preview/Development environment scopes.
 
-### Option 2: Azure SQL Database
-- Best for enterprise/Azure-native stack
-- Update Drizzle config for PostgreSQL dialect
-
-### Option 3: Turso (Distributed SQLite)
-- SQLite with replication
-- Good for global edge deployments
+### Alternative Options
+- **Azure SQL Database** – best for Azure-native deployments; update the Drizzle config to use the Azure connection string.
+- **Turso** – serverless SQLite with global replicas; swap `postgres` driver for `libsql` in `lib/db/index.ts` if you prefer to stay on SQLite dialect.
 
 ---
 
@@ -115,8 +114,9 @@ npm run dev
 - Check API version compatibility
 
 ### Database errors on Vercel
-- SQLite is ephemeral in serverless - data resets between deployments
-- For persistence, migrate to Vercel Postgres or cloud database
+- Verify `DATABASE_URL`/`DATABASE_URL_UNPOOLED` match the values from Vercel Postgres (Neon)
+- Ensure `sslmode=require` is present so TLS succeeds
+- Run `npx drizzle-kit push` after setting the variables to apply migrations
 
 ### Realtime API not working
 - Ensure `gpt-4o-realtime-preview` deployment is created

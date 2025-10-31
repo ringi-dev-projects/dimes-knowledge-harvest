@@ -22,7 +22,7 @@ AI-powered platform to convert senior employees' tacit know-how into searchable,
 ## Tech Stack
 
 - **Frontend**: Next.js 15, React 19, Tailwind CSS
-- **Database**: SQLite with Drizzle ORM
+- **Database**: Vercel Postgres (Neon) with Drizzle ORM
 - **AI/ML**: Azure OpenAI (GPT-4, Realtime API), Azure Speech Services
 - **Deployment**: Vercel-ready
 
@@ -41,9 +41,6 @@ AI-powered platform to convert senior employees' tacit know-how into searchable,
 1. Clone and install dependencies:
 ```bash
 npm install
-
-# If you encounter better-sqlite3 errors, rebuild it:
-npm rebuild better-sqlite3
 ```
 
 2. Configure environment variables:
@@ -59,6 +56,7 @@ AZURE_OPENAI_REALTIME_API_VERSION=2025-04-01-preview
 AZURE_OPENAI_REALTIME_VOICE=verse
 AZURE_SPEECH_KEY=your_speech_key
 AZURE_SPEECH_REGION=japaneast
+DATABASE_URL=postgresql://your_user:your_password@your-host/neondb?sslmode=require
 ```
 
 3. Run development server:

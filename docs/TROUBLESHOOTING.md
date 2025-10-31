@@ -2,31 +2,30 @@
 
 ## Common Issues and Solutions
 
-### 1. `better-sqlite3` Module Version Error
+### 1. Postgres Connection Error
 
 **Error Message:**
 ```
-Error: The module 'better-sqlite3/build/Release/better_sqlite3.node'
-was compiled against a different Node.js version using
-NODE_MODULE_VERSION 131. This version of Node.js requires
-NODE_MODULE_VERSION 127.
+error: password authentication failed for user "neondb_owner"
+```
+or
+```
+Error: SASL: SCRAM authentication failed
 ```
 
 **Cause:**
-The `better-sqlite3` native module was compiled for a different Node.js version.
+- `DATABASE_URL` not set or contains the wrong credentials
+- `sslmode=require` missing on Vercel Postgres (Neon)
+- Using the pooled URL (`...-pooler...`) in a context that requires a direct connection
 
 **Solution:**
-```bash
-npm rebuild better-sqlite3
-```
-
-This will recompile the native module for your current Node.js version.
-
-**Prevention:**
-After switching Node.js versions (e.g., with nvm or asdf), always run:
-```bash
-npm rebuild
-```
+- Verify `DATABASE_URL` in `.env.local` and Vercel → Environment Variables matches the value shown in the Vercel Postgres dashboard (`postgresql://...sslmode=require`).
+- If migrations complain about pgbouncer, use `DATABASE_URL_UNPOOLED` locally and `DIRECT_URL`/`POSTGRES_URL_NON_POOLING` for tools that need a direct connection.
+- After updating variables run:
+  ```bash
+  vercel env pull .env.vercel
+  ```
+  so local development matches production.
 
 ---
 
@@ -47,25 +46,20 @@ Either:
 
 ---
 
-### 3. Database Connection Errors
+### 3. Database Connection Errors (Local Development)
 
 **Error Message:**
 ```
-Error: SQLITE_CANTOPEN: unable to open database file
+error: self signed certificate in certificate chain
 ```
 
 **Solution:**
-Ensure the `data` directory exists and has write permissions:
-```bash
-mkdir -p data
-chmod 755 data
-```
-
-**Alternative:**
-Set a specific database path in `.env.local`:
-```
-DATABASE_URL=/tmp/knowledge-harvest.db
-```
+- Ensure you are using the Neon URL that includes `sslmode=require` so TLS is handled automatically.
+- If you need to run the database with pooling disabled (for migrations or scripts), use the `DATABASE_URL_UNPOOLED` value Vercel provides. Set it in a terminal session before running Drizzle commands:
+  ```bash
+  export DATABASE_URL="postgresql://...ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+  ```
+- Double-check that your local network/firewall allows outbound connections on port 5432.
 
 ---
 

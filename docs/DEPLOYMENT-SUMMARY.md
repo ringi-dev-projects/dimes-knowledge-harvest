@@ -4,7 +4,7 @@
 
 ### 1. **Dockerfile** - Multi-stage Docker build
 - ✅ Production-optimized build
-- ✅ Handles `better-sqlite3` native module
+- ✅ Uses managed Postgres connection (Vercel Postgres / Neon)
 - ✅ Non-root user for security
 - ✅ ~200MB final image size
 

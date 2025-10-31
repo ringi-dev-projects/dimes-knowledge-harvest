@@ -12,7 +12,6 @@ COPY package*.json ./
 
 # Install dependencies
 RUN npm ci
-RUN npm rebuild better-sqlite3
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -38,9 +37,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-
-# Create data directory for SQLite with proper permissions
-RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 
 # Copy built application
 COPY --from=builder /app/public ./public

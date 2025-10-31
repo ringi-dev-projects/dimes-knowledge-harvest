@@ -109,7 +109,6 @@ AZURE_SEARCH_API_KEY
 
 The `.github/workflows/azure-static-web-apps-*.yml` file has been updated to:
 - ✅ Use Node.js 20
-- ✅ Rebuild `better-sqlite3`
 - ✅ Build Next.js app with environment variables
 - ✅ Deploy `.next` output directory
 
@@ -234,7 +233,6 @@ WORKDIR /app
 
 COPY package*.json ./
 RUN npm ci
-RUN npm rebuild better-sqlite3
 
 COPY . .
 RUN npm run build
@@ -299,9 +297,14 @@ curl https://your-app.azurestaticapps.net/
 
 ## Common Issues
 
-### 1. Build Fails with "better-sqlite3" Error
+### 1. Database Connection Errors
 
-**Solution:** The workflow now includes `npm rebuild better-sqlite3`
+**Symptom:** Azure deployment logs show `error: password authentication failed` or `self signed certificate`.
+
+**Solution:**
+- Ensure `DATABASE_URL` points to a managed Postgres instance (Azure Database for PostgreSQL, Vercel Postgres, etc.)
+- Add `?sslmode=require` to enforce TLS.
+- If running migrations in the workflow, use the non-pooled connection string (e.g., `DATABASE_URL_UNPOOLED`).
 
 ### 2. Environment Variables Not Available
 
