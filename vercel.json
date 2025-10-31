@@ -4,20 +4,5 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "regions": ["iad1"],
-  "env": {
-    "AZURE_OPENAI_API_KEY": "@azure-openai-api-key",
-    "AZURE_OPENAI_ENDPOINT": "@azure-openai-endpoint",
-    "AZURE_OPENAI_DEPLOYMENT_NAME": "@azure-openai-deployment-name",
-    "AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME": "@azure-openai-realtime-deployment-name",
-    "AZURE_OPENAI_API_VERSION": "@azure-openai-api-version",
-    "AZURE_SPEECH_KEY": "@azure-speech-key",
-    "AZURE_SPEECH_REGION": "@azure-speech-region",
-    "AZURE_STORAGE_CONNECTION_STRING": "@azure-storage-connection-string",
-    "AZURE_STORAGE_CONTAINER_NAME": "@azure-storage-container-name",
-    "AZURE_SEARCH_ENDPOINT": "@azure-search-endpoint",
-    "AZURE_SEARCH_API_KEY": "@azure-search-api-key",
-    "AZURE_SEARCH_INDEX_NAME": "@azure-search-index-name",
-    "NEXT_PUBLIC_APP_URL": "@next-public-app-url"
-  }
+  "regions": ["iad1"]
 }
