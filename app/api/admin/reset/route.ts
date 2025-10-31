@@ -14,19 +14,23 @@ import path from 'path';
 
 export async function POST(_request: NextRequest) {
   try {
-    db.transaction((tx) => {
-      tx.delete(knowledgeAtoms);
-      tx.delete(qaTurns);
-      tx.delete(coverageScores);
-      tx.delete(exportJobs);
-      tx.delete(interviewSessions);
-      tx.delete(topicTrees);
-      tx.delete(companies);
+    await db.transaction(async (tx) => {
+      await tx.delete(knowledgeAtoms);
+      await tx.delete(qaTurns);
+      await tx.delete(coverageScores);
+      await tx.delete(exportJobs);
+      await tx.delete(interviewSessions);
+      await tx.delete(topicTrees);
+      await tx.delete(companies);
     });
 
     const audioDir = path.join(process.cwd(), 'data', 'interviews');
-    await fs.rm(audioDir, { recursive: true, force: true });
-    await fs.mkdir(audioDir, { recursive: true });
+    try {
+      await fs.rm(audioDir, { recursive: true, force: true });
+      await fs.mkdir(audioDir, { recursive: true });
+    } catch (fsError) {
+      console.warn('Reset audio directory skipped:', fsError);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
