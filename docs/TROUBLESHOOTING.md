@@ -259,6 +259,14 @@ ENOENT: no such file or directory, mkdir '/var/task/data'
 - Provide `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_CONTAINER_NAME` so uploads go to Azure Blob Storage.
 - For demos without persistent storage, treat the missing `audioUrl` as expected behaviour.
 
+### 14. Coverage/Extraction APIs return 401 in Vercel logs
+
+**Cause:** Preview deployments with protection enabled require either the preview bypass cookie or the `x-vercel-protection-bypass` header. The `interview/end` route now forwards the incoming cookie and optional `VERCEL_DEPLOYMENT_PROTECTION_BYPASS` token so internal fetches succeed.
+
+**Fix:**
+- Ensure users have unlocked the preview deployment in their browser (the cookie will be forwarded automatically), **and**
+- Set `VERCEL_DEPLOYMENT_PROTECTION_BYPASS` in the environment if you keep deployment protection on; the API will add the header for server-to-server requests.
+
 ---
 
 ## Quick Diagnostics

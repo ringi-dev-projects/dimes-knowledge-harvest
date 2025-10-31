@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
       origin: request.nextUrl.origin,
       companyId: sessionRecord.companyId,
       sessionId: sessionRecord.id,
+      cookieHeader: request.headers.get('cookie') ?? undefined,
     });
 
     return NextResponse.json({
@@ -208,9 +209,22 @@ async function runPostInterviewPipeline(params: {
   origin: string;
   companyId: number;
   sessionId: number;
+  cookieHeader?: string;
 }) {
-  const { origin, companyId, sessionId } = params;
-  const headers = { 'Content-Type': 'application/json' };
+  const { origin, companyId, sessionId, cookieHeader } = params;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (cookieHeader) {
+    headers['Cookie'] = cookieHeader;
+  }
+
+  const protectionBypass = process.env.VERCEL_DEPLOYMENT_PROTECTION_BYPASS;
+  if (protectionBypass) {
+    headers['x-vercel-protection-bypass'] = protectionBypass;
+  }
 
   try {
     await fetch(`${origin}/api/knowledge/extract`, {
