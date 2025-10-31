@@ -31,6 +31,13 @@ export async function POST(request: NextRequest) {
       .where(eq(companies.id, companyId))
       .limit(1);
 
+    if (!companyRecord) {
+      return NextResponse.json(
+        { error: 'Company record not found. Please re-seed the company profile before starting an interview.' },
+        { status: 404 }
+      );
+    }
+
     const [latestTopicTree] = await db
       .select()
       .from(topicTrees)
@@ -69,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     const interviewInstructions = getInterviewerInstructions(
-      companyRecord?.name ?? 'the company',
+      companyRecord.name,
       parsedTopicTree,
       requestedLocale
     );
@@ -107,7 +114,7 @@ export async function POST(request: NextRequest) {
       voice: REALTIME_VOICE,
       instructions: interviewInstructions,
       topicTreeId: latestTopicTree?.id ?? null,
-      companyName: companyRecord?.name ?? null,
+      companyName: companyRecord.name,
     });
   } catch (error) {
     console.error('Error creating realtime session:', error);

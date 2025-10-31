@@ -238,6 +238,20 @@ Failed to initialize database: Error: ENOENT: no such file or directory, mkdir '
 - Redeploy so the updated environment variable is picked up.
 - For persistent storage, switch to Vercel Postgres (see [Database Resets on Vercel](#10-database-resets-on-vercel)).
 
+### 12. FOREIGN KEY constraint failed (Realtime Session)
+
+**Error:**
+```
+SqliteError: FOREIGN KEY constraint failed
+```
+
+**Cause:** The interview route (`/api/realtime/session`) creates a row in `interview_sessions` that references the selected company. If the SQLite database has been reset (common on Vercel), the company record may no longer exist. The request still sends the old ID from `localStorage`, which trips the foreign key constraint.
+
+**Fix:**
+- Re-seed the company profile (Dashboard → Seed Topic Map) so a fresh company row exists.
+- Or use the “Show Mock Data” workflow again to create demo records.
+- After re-seeding, retry starting the interview. The API now returns a clear `404 Company record not found` response so the UI can prompt you to re-seed instead of failing silently.
+
 ---
 
 ## Quick Diagnostics
