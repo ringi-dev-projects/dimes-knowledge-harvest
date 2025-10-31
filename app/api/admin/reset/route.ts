@@ -29,7 +29,11 @@ export async function POST(_request: NextRequest) {
       await fs.rm(audioDir, { recursive: true, force: true });
       await fs.mkdir(audioDir, { recursive: true });
     } catch (fsError) {
-      console.warn('Reset audio directory skipped:', fsError);
+      if (fsError && typeof fsError === 'object' && 'code' in fsError && (fsError as NodeJS.ErrnoException).code === 'EROFS') {
+        console.info('Reset audio directory skipped on read-only filesystem (expected on Vercel).');
+      } else {
+        console.warn('Reset audio directory skipped:', fsError);
+      }
     }
 
     return NextResponse.json({ success: true });
