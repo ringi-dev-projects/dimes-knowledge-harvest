@@ -11,33 +11,55 @@ function resolveDatabasePath(): string {
   const rawEnvPath = process.env.DATABASE_URL?.trim();
 
   if (!rawEnvPath) {
-    const dataDir = path.join(process.cwd(), 'data');
-    ensureDir(dataDir);
-    return path.join(dataDir, 'knowledge-harvest.db');
+    return getDefaultPath();
   }
 
-  const dbPath = rawEnvPath.startsWith('.')
-    ? path.resolve(process.cwd(), rawEnvPath)
-    : rawEnvPath;
+  const candidate = path.isAbsolute(rawEnvPath)
+    ? rawEnvPath
+    : path.resolve(process.cwd(), rawEnvPath);
 
-  const dbDir = path.dirname(dbPath);
-  if (shouldEnsureDir(dbDir)) {
-    ensureDir(dbDir);
+  if (ensureDirSafe(path.dirname(candidate))) {
+    return candidate;
   }
 
-  return dbPath;
+  return getDefaultPath();
 }
 
-function shouldEnsureDir(dir: string): boolean {
-  const normalizedDir = path.normalize(dir);
-  const normalizedCwd = path.normalize(process.cwd());
+function getDefaultPath(): string {
+  if (process.env.VERCEL === '1') {
+    const tmpPath = path.join('/tmp', 'knowledge-harvest.db');
+    ensureDirSafe(path.dirname(tmpPath));
+    return tmpPath;
+  }
 
-  return normalizedDir.startsWith(normalizedCwd) || normalizedDir.startsWith('/tmp');
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!ensureDirSafe(dataDir)) {
+    // Fall back to tmp even for local unusual cases
+    const tmpPath = path.join('/tmp', 'knowledge-harvest.db');
+    ensureDirSafe(path.dirname(tmpPath));
+    return tmpPath;
+  }
+
+  return path.join(dataDir, 'knowledge-harvest.db');
 }
 
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
+function ensureDirSafe(dir: string): boolean {
+  if (fs.existsSync(dir)) {
+    return true;
+  }
+
+  try {
     fs.mkdirSync(dir, { recursive: true });
+    return true;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'EEXIST') {
+      return true;
+    }
+    if (err.code === 'EACCES' || err.code === 'EROFS' || err.code === 'EPERM' || err.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
   }
 }
 
