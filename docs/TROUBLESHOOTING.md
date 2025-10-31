@@ -224,6 +224,20 @@ export async function GET(request: NextRequest) {
    - Update Drizzle config for PostgreSQL
    - Update connection string
 
+### 11. ENOENT: `/var/task/data` (Vercel)
+
+**Error:**
+```
+Failed to initialize database: Error: ENOENT: no such file or directory, mkdir '/var/task/data'
+```
+
+**Cause:** Vercel's serverless filesystem is read-only except for `/tmp`. If `DATABASE_URL` is missing (or points to a relative path), the app tries to create `data/` inside `/var/task`, which fails.
+
+**Fix:**
+- In Vercel → Project → Settings → Environment Variables, set `DATABASE_URL` to `/tmp/knowledge-harvest.db` for Production/Preview/Development.
+- Redeploy so the updated environment variable is picked up.
+- For persistent storage, switch to Vercel Postgres (see [Database Resets on Vercel](#10-database-resets-on-vercel)).
+
 ---
 
 ## Quick Diagnostics

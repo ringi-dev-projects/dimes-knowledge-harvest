@@ -7,19 +7,47 @@ import fs from 'fs';
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
 let sqliteInstance: Database.Database | null = null;
 
+function resolveDatabasePath(): string {
+  const rawEnvPath = process.env.DATABASE_URL?.trim();
+
+  if (!rawEnvPath) {
+    const dataDir = path.join(process.cwd(), 'data');
+    ensureDir(dataDir);
+    return path.join(dataDir, 'knowledge-harvest.db');
+  }
+
+  const dbPath = rawEnvPath.startsWith('.')
+    ? path.resolve(process.cwd(), rawEnvPath)
+    : rawEnvPath;
+
+  const dbDir = path.dirname(dbPath);
+  if (shouldEnsureDir(dbDir)) {
+    ensureDir(dbDir);
+  }
+
+  return dbPath;
+}
+
+function shouldEnsureDir(dir: string): boolean {
+  const normalizedDir = path.normalize(dir);
+  const normalizedCwd = path.normalize(process.cwd());
+
+  return normalizedDir.startsWith(normalizedCwd) || normalizedDir.startsWith('/tmp');
+}
+
+function ensureDir(dir: string): void {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
 function initializeDb() {
   if (dbInstance) {
     return dbInstance;
   }
 
   try {
-    // Ensure data directory exists
-    const dataDir = path.join(process.cwd(), 'data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    const dbPath = process.env.DATABASE_URL || path.join(dataDir, 'knowledge-harvest.db');
+    const dbPath = resolveDatabasePath();
 
     // Create SQLite connection
     sqliteInstance = new Database(dbPath);
