@@ -67,6 +67,8 @@ Click "Deploy" - Vercel will build and deploy automatically.
 
 ## Database Considerations for Production
 
+> 🔊 Audio recordings are uploaded to Azure Blob Storage when `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_CONTAINER_NAME` are set. Without those, the API stores audio locally in development and returns `audioUrl: null` on Vercel.
+
 **Current Setup:** Vercel Postgres (serverless Neon)
 
 ### Provision a Database

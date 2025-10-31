@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { BlobServiceClient } from '@azure/storage-blob';
 import { db } from '@/lib/db';
 import { interviewSessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -112,18 +113,78 @@ function parseMessages(payload: unknown): InterviewMessage[] {
 }
 
 async function persistAudioFile(file: File, sessionId: number) {
-  const audioDir = path.join(process.cwd(), 'data', 'interviews');
-  await fs.mkdir(audioDir, { recursive: true });
+  const azureUrl = await persistToAzureBlob(file, sessionId);
+  if (azureUrl) {
+    return azureUrl;
+  }
+
+  const storage = resolveAudioStorage();
+
+  try {
+    await fs.mkdir(storage.directory, { recursive: true });
+  } catch (error) {
+    console.warn('Skipping audio persistence (mkdir failed):', error);
+    return null;
+  }
 
   const extension = detectAudioExtension(file.type);
   const fileName = `session-${sessionId}-${Date.now()}.${extension}`;
-  const filePath = path.join(audioDir, fileName);
+  const filePath = path.join(storage.directory, fileName);
 
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  await fs.writeFile(filePath, buffer);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    await fs.writeFile(filePath, buffer);
+  } catch (error) {
+    console.warn('Skipping audio persistence (write failed):', error);
+    return null;
+  }
 
-  return `interviews/${fileName}`;
+  return storage.returnRelativePath ? `interviews/${fileName}` : null;
+}
+
+async function persistToAzureBlob(file: File, sessionId: number) {
+  const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME;
+
+  if (!connectionString || !containerName) {
+    return null;
+  }
+
+  try {
+    const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
+    const containerClient = blobServiceClient.getContainerClient(containerName);
+    await containerClient.createIfNotExists({ access: 'blob' });
+
+    const extension = detectAudioExtension(file.type);
+    const blobName = `interviews/session-${sessionId}-${Date.now()}.${extension}`;
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+
+    const arrayBuffer = await file.arrayBuffer();
+    await blockBlobClient.uploadData(arrayBuffer, {
+      blobHTTPHeaders: {
+        blobContentType: file.type || 'application/octet-stream',
+      },
+    });
+
+    return blockBlobClient.url;
+  } catch (error) {
+    console.error('Azure Blob upload failed, falling back to local storage:', error);
+    return null;
+  }
+}
+
+function resolveAudioStorage(): { directory: string; returnRelativePath: boolean } {
+  const configured = process.env.AUDIO_STORAGE_DIR;
+  if (configured) {
+    return { directory: configured, returnRelativePath: false };
+  }
+
+  if (process.env.VERCEL === '1') {
+    return { directory: path.join('/tmp', 'interviews'), returnRelativePath: false };
+  }
+
+  return { directory: path.join(process.cwd(), 'data', 'interviews'), returnRelativePath: true };
 }
 
 function detectAudioExtension(mimeType: string) {

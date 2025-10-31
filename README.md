@@ -57,6 +57,7 @@ AZURE_OPENAI_REALTIME_VOICE=verse
 AZURE_SPEECH_KEY=your_speech_key
 AZURE_SPEECH_REGION=japaneast
 DATABASE_URL=postgresql://your_user:your_password@your-host/neondb?sslmode=require
+# AUDIO_STORAGE_DIR=/path/for/saving/interview-audio (optional; ignored on Vercel)
 ```
 
 3. Run development server:

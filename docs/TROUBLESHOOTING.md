@@ -246,6 +246,19 @@ SqliteError: FOREIGN KEY constraint failed
 - Or use the “Show Mock Data” workflow again to create demo records.
 - After re-seeding, retry starting the interview. The API now returns a clear `404 Company record not found` response so the UI can prompt you to re-seed instead of failing silently.
 
+### 13. Audio Upload Fails on Vercel
+
+**Error:**
+```
+ENOENT: no such file or directory, mkdir '/var/task/data'
+```
+
+**Cause:** Vercel's read-only filesystem blocks writing under the project directory. Without Azure Blob storage credentials the app falls back to local storage (dev only) and returns `audioUrl: null` in production.
+
+**Fix:**
+- Provide `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_CONTAINER_NAME` so uploads go to Azure Blob Storage.
+- For demos without persistent storage, treat the missing `audioUrl` as expected behaviour.
+
 ---
 
 ## Quick Diagnostics
