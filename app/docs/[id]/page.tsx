@@ -166,7 +166,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-8 py-12">
+        <div className="mx-auto max-w-4xl px-8 py-12 space-y-12">
           {doc.sections.map((section) => (
             <SectionContent
               key={section.id}
@@ -190,20 +190,24 @@ function SectionContent({ section, isActive }: { section: DocumentSection; isAct
   }, [isActive]);
 
   return (
-    <div ref={ref} id={section.id} className="mb-12">
-      <h2 className="text-3xl font-bold text-gray-900 mb-4">{section.title}</h2>
+    <div
+      ref={ref}
+      id={section.id}
+      className="rounded-3xl border border-slate-200 bg-white/95 p-8 shadow-sm backdrop-blur"
+    >
+      <h2 className="text-3xl font-bold text-slate-900 mb-6">{section.title}</h2>
       <div
-        className="prose prose-indigo max-w-none"
+        className="prose max-w-none prose-lg prose-headings:text-slate-900 prose-slate prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-code:bg-slate-100 prose-code:text-slate-900"
         dangerouslySetInnerHTML={{ __html: section.content }}
       />
 
       {section.subsections && section.subsections.length > 0 && (
-        <div className="ml-8 mt-8 space-y-8">
+        <div className="mt-10 space-y-10 border-t border-slate-200 pt-10">
           {section.subsections.map((sub) => (
             <div key={sub.id} id={sub.id}>
-              <h3 className="text-2xl font-semibold text-gray-800 mb-3">{sub.title}</h3>
+              <h3 className="text-2xl font-semibold text-slate-900 mb-4">{sub.title}</h3>
               <div
-                className="prose prose-sm max-w-none"
+                className="prose max-w-none prose-base prose-slate prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900"
                 dangerouslySetInnerHTML={{ __html: sub.content }}
               />
             </div>
