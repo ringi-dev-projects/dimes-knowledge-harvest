@@ -8,6 +8,7 @@ import {
   interviewSessions,
   topicTrees,
   companies,
+  interviewAutosaves,
 } from '@/lib/db/schema';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -19,6 +20,7 @@ export async function POST(_request: NextRequest) {
       await tx.delete(qaTurns);
       await tx.delete(coverageScores);
       await tx.delete(exportJobs);
+      await tx.delete(interviewAutosaves);
       await tx.delete(interviewSessions);
       await tx.delete(topicTrees);
       await tx.delete(companies);

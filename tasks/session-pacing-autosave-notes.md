@@ -61,3 +61,8 @@ These notes translate the P0 requirement for session pacing guardrails into conc
 3. Build an `AutosaveManager` utility that buffers messages and timer state, posts to the new API, and restores on mount.
 4. Create `/api/interview/autosave` for upserts into a new `interview_autosaves` table (sessionId, payload JSON, updatedAt).
 5. Update analytics instrumentation (Segment/OpenTelemetry) to capture the new events and ensure dashboards expose compliance with success metrics.
+
+## Implementation Status (2025-11-04)
+- Timer presets, countdown UI, reminders, and wrap-up modal implemented in `app/interview/page.tsx` with resume-aware defaults.
+- Autosave pipeline delivered via `app/api/interview/autosave/route.ts` and the `interview_autosaves` table; client dispatches checkpoints every ~60s and on transcript progress.
+- Analytics events emitted through `fireAnalyticsEvent` for option selection, reminders, extensions, resume/discard actions, and wrap-up prompts.

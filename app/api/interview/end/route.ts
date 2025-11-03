@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { db } from '@/lib/db';
-import { interviewSessions } from '@/lib/db/schema';
+import { interviewAutosaves, interviewSessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { InterviewMessage } from '@/lib/types';
 
@@ -79,6 +79,8 @@ export async function POST(request: NextRequest) {
         audioUrl,
       })
       .where(eq(interviewSessions.id, sessionId));
+
+    await db.delete(interviewAutosaves).where(eq(interviewAutosaves.sessionId, sessionId));
 
     await runPostInterviewPipeline({
       origin: request.nextUrl.origin,

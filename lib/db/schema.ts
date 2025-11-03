@@ -59,6 +59,17 @@ export const coverageScores = pgTable('coverage_scores', {
   lastUpdated: timestamp('last_updated', { withTimezone: true }).notNull(),
 });
 
+export const interviewAutosaves = pgTable('interview_autosaves', {
+  sessionId: integer('session_id').primaryKey().references(() => interviewSessions.id, { onDelete: 'cascade' }),
+  timerOption: text('timer_option').notNull(),
+  secondsRemaining: integer('seconds_remaining'),
+  secondsElapsed: integer('seconds_elapsed').notNull().default(0),
+  extensionCount: integer('extension_count').notNull().default(0),
+  messagesJson: text('messages_json').notNull(),
+  coverageJson: text('coverage_json').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
 export const exportJobs = pgTable('export_jobs', {
   id: serial('id').primaryKey(),
   companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),

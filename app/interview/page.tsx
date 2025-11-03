@@ -37,10 +37,31 @@ interface TopicNode {
   children?: TopicNode[];
 }
 
+type TimerOptionId = '15' | '30' | 'unlimited';
+
+interface TimerOption {
+  id: TimerOptionId;
+  minutes: number | null;
+}
+
+interface AutosaveSnapshot {
+  sessionId: number;
+  timerOption: TimerOptionId;
+  secondsRemaining: number | null;
+  secondsElapsed: number;
+  extensionCount: number;
+  coverage: CoverageEntry[];
+  messages: InterviewMessage[];
+  updatedAt: string;
+}
+
 const TRANSCRIPTION_MODEL = 'whisper-1';
 
 const SPEAKER_THRESHOLD = 0.05;
 const SPEAKER_DECAY_MS = 1200;
+
+const AUTOSAVE_INTERVAL_MS = 60_000;
+const AUTOSAVE_MIN_GAP_MS = 15_000;
 
 const TOOL_DEFINITIONS = [
   {
@@ -70,6 +91,14 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
+const TIMER_OPTIONS: TimerOption[] = [
+  { id: '15', minutes: 15 },
+  { id: '30', minutes: 30 },
+  { id: 'unlimited', minutes: null },
+];
+
+const UNLIMITED_REMINDER_OPTIONS = [0, 10, 15, 20, 30];
+
 export default function InterviewPage() {
   const { companyId, companyName } = useCompany();
   const { dictionary, locale } = useLocale();
@@ -89,6 +118,18 @@ export default function InterviewPage() {
   const [speakerLevels, setSpeakerLevels] = useState({ user: 0, assistant: 0 });
   const [coverageProgress, setCoverageProgress] = useState<CoverageEntry[]>([]);
   const [coverageLoading, setCoverageLoading] = useState(false);
+  const [timerOption, setTimerOption] = useState<TimerOptionId>('15');
+  const [timerSecondsRemaining, setTimerSecondsRemaining] = useState<number | null>(15 * 60);
+  const [timerSecondsElapsed, setTimerSecondsElapsed] = useState(0);
+  const [timerExtensionCount, setTimerExtensionCount] = useState(0);
+  const [wrapUpModalOpen, setWrapUpModalOpen] = useState(false);
+  const [wrapUpAutoDeadline, setWrapUpAutoDeadline] = useState<number | null>(null);
+  const [resumeSnapshot, setResumeSnapshot] = useState<AutosaveSnapshot | null>(null);
+  const [pendingResume, setPendingResume] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
+  const [autosaveError, setAutosaveError] = useState<string | null>(null);
+  const [unlimitedReminderMinutes, setUnlimitedReminderMinutes] = useState(20);
+  const [reminderMessage, setReminderMessage] = useState<string | null>(null);
 
   const sessionIdRef = useRef<number | null>(null);
   const messagesRef = useRef<InterviewMessage[]>([]);
@@ -116,9 +157,23 @@ export default function InterviewPage() {
   const functionCallBuffersRef = useRef<Map<string, { name?: string; args: string }>>(new Map());
   const topicGraphRef = useRef<Map<string, TopicNode>>(new Map());
   const lastSpeakerRef = useRef<{ role: 'assistant' | 'user'; timestamp: number } | null>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const wrapUpTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveInFlightRef = useRef(false);
+  const lastAutosaveAtRef = useRef<number>(0);
+  const wrapUpTriggeredRef = useRef(false);
+  const lastReminderAtRef = useRef<number | null>(null);
+  const activeSessionStartedAtRef = useRef<number | null>(null);
+  const reminderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingTimerConfigRef = useRef<{ remaining: number | null; elapsed: number; extensionCount: number } | null>(null);
 
   const [activeSpeaker, setActiveSpeaker] = useState<'assistant' | 'user' | null>(null);
   const [postSessionInfo, setPostSessionInfo] = useState<{ sessionId: number; companyId?: number | null } | null>(null);
+  const selectedTimer = useMemo(() => {
+    const match = TIMER_OPTIONS.find((option) => option.id === timerOption);
+    return match ?? TIMER_OPTIONS[0];
+  }, [timerOption]);
 
   const loadTopicContext = useCallback(async () => {
     if (!companyId) {
@@ -216,6 +271,105 @@ export default function InterviewPage() {
     }
   }, [companyId, loadTopicContext]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedOption = window.localStorage.getItem('interviewTimerOption');
+    if (storedOption === '15' || storedOption === '30' || storedOption === 'unlimited') {
+      setTimerOption(storedOption);
+    }
+    if (storedOption === 'unlimited') {
+      const storedReminder = window.localStorage.getItem('interviewTimerUnlimitedReminder');
+      if (storedReminder) {
+        const parsed = parseInt(storedReminder, 10);
+        if (!Number.isNaN(parsed) && parsed > 0) {
+          setUnlimitedReminderMinutes(parsed);
+        }
+      }
+    }
+    const storedSessionId = window.localStorage.getItem('activeInterviewSessionId');
+    if (storedSessionId) {
+      const parsedSessionId = parseInt(storedSessionId, 10);
+      if (Number.isNaN(parsedSessionId)) {
+        window.localStorage.removeItem('activeInterviewSessionId');
+        return;
+      }
+      (async () => {
+        try {
+          const response = await fetch(`/api/interview/autosave?sessionId=${parsedSessionId}`);
+          if (!response.ok) {
+            if (response.status === 404) {
+              window.localStorage.removeItem('activeInterviewSessionId');
+            }
+            return;
+          }
+          const payload = await response.json();
+          if (payload?.snapshot) {
+            setResumeSnapshot(payload.snapshot as AutosaveSnapshot);
+          } else {
+            window.localStorage.removeItem('activeInterviewSessionId');
+          }
+        } catch (fetchError) {
+          console.warn('Failed to load autosave snapshot:', fetchError);
+        }
+      })();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('interviewTimerOption', timerOption);
+  }, [timerOption]);
+
+  useEffect(() => {
+    if (timerOption !== 'unlimited') {
+      return;
+    }
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('interviewTimerUnlimitedReminder', String(unlimitedReminderMinutes));
+  }, [timerOption, unlimitedReminderMinutes]);
+
+  useEffect(() => {
+    if (isRecording || pendingResume) {
+      return;
+    }
+    resetTimerForOption();
+  }, [isRecording, pendingResume, resetTimerForOption, timerOption]);
+
+  useEffect(() => {
+    if (!isRecording || !sessionIdRef.current) {
+      if (autosaveIntervalRef.current) {
+        clearInterval(autosaveIntervalRef.current);
+        autosaveIntervalRef.current = null;
+      }
+      return;
+    }
+    if (autosaveIntervalRef.current) {
+      clearInterval(autosaveIntervalRef.current);
+    }
+    autosaveIntervalRef.current = setInterval(() => {
+      runAutosave('interval');
+    }, AUTOSAVE_INTERVAL_MS);
+    return () => {
+      if (autosaveIntervalRef.current) {
+        clearInterval(autosaveIntervalRef.current);
+        autosaveIntervalRef.current = null;
+      }
+    };
+  }, [isRecording, runAutosave]);
+
+  useEffect(() => {
+    if (!isRecording || !sessionIdRef.current) {
+      return;
+    }
+    runAutosave('coverage');
+  }, [coverageProgress, isRecording, runAutosave]);
+
   const updateMessages = useCallback(
     (updater: (prev: InterviewMessage[]) => InterviewMessage[]) => {
       setMessages((prev) => {
@@ -264,6 +418,192 @@ export default function InterviewPage() {
     }, 1500);
     lastSpeakerRef.current = { role: speaker, timestamp: Date.now() };
   }, []);
+
+  const clearReminderTimeout = useCallback(() => {
+    if (reminderTimeoutRef.current) {
+      clearTimeout(reminderTimeoutRef.current);
+      reminderTimeoutRef.current = null;
+    }
+  }, []);
+
+  const showReminder = useCallback(
+    (message: string, analytics?: { event: string; data?: Record<string, unknown> }) => {
+      clearReminderTimeout();
+      setReminderMessage(message);
+      reminderTimeoutRef.current = setTimeout(() => {
+        setReminderMessage(null);
+        reminderTimeoutRef.current = null;
+      }, 9000);
+      if (analytics) {
+        fireAnalyticsEvent(analytics.event, analytics.data ?? {});
+      }
+    },
+    [clearReminderTimeout]
+  );
+
+  const resetTimerForOption = useCallback(() => {
+    if (selectedTimer.minutes !== null) {
+      setTimerSecondsRemaining(selectedTimer.minutes * 60);
+    } else {
+      setTimerSecondsRemaining(null);
+    }
+    setTimerSecondsElapsed(0);
+    setTimerExtensionCount(0);
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    wrapUpTriggeredRef.current = false;
+    lastReminderAtRef.current = null;
+    clearReminderTimeout();
+    setReminderMessage(null);
+  }, [clearReminderTimeout, selectedTimer.minutes]);
+
+  const stopTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    if (wrapUpTimeoutRef.current) {
+      clearTimeout(wrapUpTimeoutRef.current);
+      wrapUpTimeoutRef.current = null;
+    }
+    wrapUpTriggeredRef.current = false;
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    activeSessionStartedAtRef.current = null;
+    lastReminderAtRef.current = null;
+    clearReminderTimeout();
+    setReminderMessage(null);
+    pendingTimerConfigRef.current = null;
+  }, [clearReminderTimeout]);
+
+  const startTimer = useCallback((initialRemaining: number | null, initialElapsed: number, extensionCount = 0) => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    wrapUpTriggeredRef.current = false;
+    lastReminderAtRef.current = null;
+    activeSessionStartedAtRef.current = Date.now() - initialElapsed * 1000;
+    setTimerSecondsRemaining(initialRemaining);
+    setTimerSecondsElapsed(initialElapsed);
+    setTimerExtensionCount(extensionCount);
+    timerIntervalRef.current = setInterval(() => {
+      setTimerSecondsElapsed((prev) => prev + 1);
+      setTimerSecondsRemaining((prev) => {
+        if (prev === null) {
+          return null;
+        }
+        return prev > 0 ? prev - 1 : 0;
+      });
+    }, 1000);
+  }, []);
+
+  const extendTimer = useCallback(() => {
+    setTimerSecondsRemaining((prev) => {
+      if (prev === null) {
+        return null;
+      }
+      return prev > 0 ? prev + 300 : 300;
+    });
+    setTimerExtensionCount((prev) => {
+      const next = prev + 1;
+      fireAnalyticsEvent('interview_timer_extended', { count: next });
+      return next;
+    });
+    wrapUpTriggeredRef.current = false;
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    if (wrapUpTimeoutRef.current) {
+      clearTimeout(wrapUpTimeoutRef.current);
+      wrapUpTimeoutRef.current = null;
+    }
+    clearReminderTimeout();
+  }, [clearReminderTimeout]);
+
+  const buildTimerAwareInstructions = useCallback(
+    (baseInstructions: string, option: TimerOption, reminderMinutes: number | null) => {
+      const trimmed = baseInstructions.trim();
+      if (option.minutes !== null) {
+        const line = formatTemplate(tInterview.timer.instructions.timeboxed, {
+          minutes: String(option.minutes),
+        });
+        return `${trimmed}\n\n${line}`.trim();
+      }
+      if (reminderMinutes && reminderMinutes > 0) {
+        const line = formatTemplate(tInterview.timer.instructions.unlimitedWithReminder, {
+          minutes: String(reminderMinutes),
+        });
+        return `${trimmed}\n\n${line}`.trim();
+      }
+      return `${trimmed}\n\n${tInterview.timer.instructions.unlimited}`.trim();
+    },
+    [tInterview.timer.instructions]
+  );
+
+  const runAutosave = useCallback(
+    async (reason: 'interval' | 'message' | 'coverage') => {
+      if (!sessionIdRef.current) {
+        return;
+      }
+      if (autosaveInFlightRef.current) {
+        return;
+      }
+      const now = Date.now();
+      if (reason !== 'interval' && now - lastAutosaveAtRef.current < AUTOSAVE_MIN_GAP_MS) {
+        return;
+      }
+      autosaveInFlightRef.current = true;
+      setAutosaveStatus('saving');
+      setAutosaveError(null);
+      try {
+        const response = await fetch('/api/interview/autosave', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sessionId: sessionIdRef.current,
+            timerOption,
+            secondsRemaining: timerSecondsRemaining,
+            secondsElapsed: timerSecondsElapsed,
+            extensionCount: timerExtensionCount,
+            coverage: coverageProgress,
+            messages: messagesRef.current,
+            updatedAt: new Date().toISOString(),
+          }),
+        });
+        if (!response.ok) {
+          let message = 'Autosave failed';
+          try {
+            const payload = await response.json();
+            if (payload?.error) {
+              message = payload.error;
+            }
+          } catch (parseError) {
+            // ignore parsing errors
+          }
+          throw new Error(message);
+        }
+        lastAutosaveAtRef.current = now;
+        setAutosaveStatus('idle');
+      } catch (autosaveErr) {
+        console.error('Autosave error:', autosaveErr);
+        setAutosaveStatus('error');
+        setAutosaveError(
+          autosaveErr instanceof Error ? autosaveErr.message : tInterview.timer.autosaveFallbackError
+        );
+      } finally {
+        autosaveInFlightRef.current = false;
+      }
+    },
+    [
+      coverageProgress,
+      timerExtensionCount,
+      timerOption,
+      timerSecondsElapsed,
+      timerSecondsRemaining,
+      tInterview.timer.autosaveFallbackError,
+    ]
+  );
 
   const ensureAudioContext = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -523,6 +863,7 @@ export default function InterviewPage() {
             content: text ?? message.content,
             timestamp: Date.now(),
           }));
+          runAutosave('message');
         };
 
         switch (eventType) {
@@ -565,11 +906,11 @@ export default function InterviewPage() {
             return;
           }
           case 'conversation.item.input_audio_transcription.completed': {
-            const transcript: string = (payload?.transcript ?? '').trim();
-            if (!transcript) return;
-            const itemId: string | undefined = payload?.item_id;
-            if (!itemId) return;
-            markActiveSpeaker('user');
+          const transcript: string = (payload?.transcript ?? '').trim();
+          if (!transcript) return;
+          const itemId: string | undefined = payload?.item_id;
+          if (!itemId) return;
+          markActiveSpeaker('user');
             let entry = userItemsRef.current.get(itemId);
             if (!entry) {
               const index = appendMessage({
@@ -585,6 +926,7 @@ export default function InterviewPage() {
                 timestamp: Date.now(),
               }));
             }
+            runAutosave('message');
             return;
           }
           case 'conversation.item.created': {
@@ -614,6 +956,7 @@ export default function InterviewPage() {
                     timestamp: Date.now(),
                   });
                   userItemsByIdRef.current.set(item.id, index);
+                  runAutosave('message');
                 }
               }
             } else if (item.type === 'function_call') {
@@ -726,7 +1069,7 @@ export default function InterviewPage() {
         console.error('Failed to process realtime event:', err, event.data);
       }
     },
-    [appendMessage, handleFunctionCall, markActiveSpeaker, tInterview, updateMessageAt]
+    [appendMessage, handleFunctionCall, markActiveSpeaker, runAutosave, tInterview, updateMessageAt]
   );
 
   const cleanupConnection = useCallback(() => {
@@ -840,6 +1183,7 @@ export default function InterviewPage() {
       clearTimeout(activeSpeakerTimeoutRef.current);
       activeSpeakerTimeoutRef.current = null;
     }
+    stopTimer();
     setMessages([]);
     messagesRef.current = [];
     assistantResponsesRef.current.clear();
@@ -864,7 +1208,112 @@ export default function InterviewPage() {
       }
       audioContextRef.current = null;
     }
-  }, [stopLevelMonitoring]);
+    setReminderMessage(null);
+    setAutosaveStatus('idle');
+    setAutosaveError(null);
+    setPendingResume(false);
+  }, [stopLevelMonitoring, stopTimer]);
+
+  const prepareResumeSession = useCallback(() => {
+    if (!resumeSnapshot) {
+      return;
+    }
+    const snapshotMinutes = TIMER_OPTIONS.find((option) => option.id === resumeSnapshot.timerOption)?.minutes ?? null;
+    setPendingResume(true);
+    setTimerOption(resumeSnapshot.timerOption);
+    setAutosaveStatus('idle');
+    setAutosaveError(null);
+    fireAnalyticsEvent('interview_resume_prepared', {
+      sessionId: resumeSnapshot.sessionId,
+      timerOption: resumeSnapshot.timerOption,
+    });
+    if (resumeSnapshot.timerOption !== 'unlimited') {
+      setTimerSecondsRemaining(
+        typeof resumeSnapshot.secondsRemaining === 'number'
+          ? Math.max(resumeSnapshot.secondsRemaining, 0)
+          : snapshotMinutes !== null
+          ? snapshotMinutes * 60
+          : null
+      );
+    } else {
+      setTimerSecondsRemaining(null);
+    }
+    setTimerSecondsElapsed(resumeSnapshot.secondsElapsed);
+    setTimerExtensionCount(resumeSnapshot.extensionCount);
+    setMessages(resumeSnapshot.messages);
+    messagesRef.current = resumeSnapshot.messages;
+    setCoverageProgress(resumeSnapshot.coverage);
+    sessionIdRef.current = resumeSnapshot.sessionId;
+    setSessionId(resumeSnapshot.sessionId);
+    lastAutosaveAtRef.current = Date.now();
+    pendingTimerConfigRef.current = {
+      remaining:
+        resumeSnapshot.timerOption === 'unlimited'
+          ? null
+          : typeof resumeSnapshot.secondsRemaining === 'number'
+          ? Math.max(resumeSnapshot.secondsRemaining, 0)
+          : snapshotMinutes !== null
+          ? snapshotMinutes * 60
+          : null,
+      elapsed: resumeSnapshot.secondsElapsed,
+      extensionCount: resumeSnapshot.extensionCount,
+    };
+  }, [resumeSnapshot, setCoverageProgress, setMessages]);
+
+  const discardResumeSnapshot = useCallback(async () => {
+    if (!resumeSnapshot) {
+      return;
+    }
+    fireAnalyticsEvent('interview_resume_discarded', {
+      sessionId: resumeSnapshot.sessionId,
+    });
+    try {
+      await fetch('/api/interview/autosave', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sessionId: resumeSnapshot.sessionId }),
+      });
+    } catch (error) {
+      console.warn('Failed to discard autosave snapshot:', error);
+    } finally {
+      setResumeSnapshot(null);
+      setPendingResume(false);
+      resetTimerForOption();
+      setSessionId(null);
+      sessionIdRef.current = null;
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('activeInterviewSessionId');
+      }
+    }
+  }, [resetTimerForOption, resumeSnapshot]);
+
+  const handleTimerOptionChange = useCallback(
+    (optionId: TimerOptionId) => {
+      if (isRecording || isConnecting) {
+        return;
+      }
+      if (timerOption === optionId) {
+        return;
+      }
+      fireAnalyticsEvent('interview_timer_selected', {
+        option: optionId,
+      });
+      setTimerOption(optionId);
+    },
+    [isConnecting, isRecording, timerOption]
+  );
+
+  const handleUnlimitedReminderChange = useCallback((minutes: number) => {
+    if (minutes <= 0) {
+      setUnlimitedReminderMinutes(0);
+      fireAnalyticsEvent('interview_timer_reminder_updated', { minutes: 0 });
+      return;
+    }
+    fireAnalyticsEvent('interview_timer_reminder_updated', { minutes });
+    setUnlimitedReminderMinutes(minutes);
+  }, []);
 
   const startInterview = useCallback(async () => {
     if (isConnecting || isRecording) {
@@ -876,14 +1325,21 @@ export default function InterviewPage() {
       return;
     }
 
+    const snapshot = pendingResume && resumeSnapshot ? resumeSnapshot : null;
+
     setError('');
     setIsConnecting(true);
     setStatus('connecting');
     setPostSessionInfo(null);
-    setSessionId(null);
+    if (!snapshot) {
+      setSessionId(null);
+      sessionIdRef.current = null;
+    }
     setStopPending(false);
-    setMessages([]);
-    messagesRef.current = [];
+    if (!snapshot) {
+      setMessages([]);
+      messagesRef.current = [];
+    }
     assistantResponsesRef.current.clear();
     userItemsRef.current.clear();
     assistantItemsRef.current.clear();
@@ -891,7 +1347,33 @@ export default function InterviewPage() {
     functionCallBuffersRef.current.clear();
 
     try {
-      if (companyId) {
+      const fallbackRemaining = selectedTimer.minutes !== null ? selectedTimer.minutes * 60 : null;
+      const initialRemaining =
+        selectedTimer.minutes !== null
+          ? snapshot && typeof snapshot.secondsRemaining === 'number'
+            ? Math.max(snapshot.secondsRemaining, 0)
+            : fallbackRemaining
+          : null;
+      const initialElapsed = snapshot ? Math.max(snapshot.secondsElapsed, 0) : 0;
+      const initialExtension = snapshot ? Math.max(snapshot.extensionCount, 0) : 0;
+      pendingTimerConfigRef.current = {
+        remaining: initialRemaining,
+        elapsed: initialElapsed,
+        extensionCount: initialExtension,
+      };
+      lastAutosaveAtRef.current = 0;
+      setAutosaveStatus('idle');
+      setAutosaveError(null);
+      if (snapshot) {
+        setTimerSecondsRemaining(initialRemaining);
+        setTimerSecondsElapsed(initialElapsed);
+        setTimerExtensionCount(initialExtension);
+      } else {
+        setTimerSecondsElapsed(0);
+        setTimerExtensionCount(0);
+      }
+
+      if (companyId && !snapshot) {
         loadTopicContext();
       }
 
@@ -915,7 +1397,11 @@ export default function InterviewPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ companyId, locale }),
+        body: JSON.stringify({
+          companyId,
+          locale,
+          resumeSessionId: snapshot?.sessionId ?? undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -930,9 +1416,16 @@ export default function InterviewPage() {
 
       setSessionId(data.sessionId);
       sessionIdRef.current = data.sessionId;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('activeInterviewSessionId', String(data.sessionId));
+      }
       sessionConfigRef.current = {
         voice: data.voice ?? 'verse',
-        instructions: data.instructions ?? instructionsFallback,
+        instructions: buildTimerAwareInstructions(
+          data.instructions ?? instructionsFallback,
+          selectedTimer,
+          selectedTimer.id === 'unlimited' ? unlimitedReminderMinutes : selectedTimer.minutes
+        ),
       };
 
       const peerConnection = new RTCPeerConnection();
@@ -957,6 +1450,25 @@ export default function InterviewPage() {
           } catch (error) {
             console.warn('Unable to start media recorder:', error);
           }
+          const timerConfig =
+            pendingTimerConfigRef.current ??
+            {
+              remaining: selectedTimer.minutes !== null ? selectedTimer.minutes * 60 : null,
+              elapsed: 0,
+              extensionCount: 0,
+            };
+          startTimer(timerConfig.remaining ?? null, timerConfig.elapsed, timerConfig.extensionCount);
+          pendingTimerConfigRef.current = null;
+          setPendingResume(false);
+          setResumeSnapshot(null);
+          runAutosave('message');
+          fireAnalyticsEvent('interview_timer_started', {
+            sessionId: sessionIdRef.current,
+            option: timerOption,
+            secondsRemaining: timerConfig.remaining,
+            secondsElapsed: timerConfig.elapsed,
+            resume: Boolean(snapshot),
+          });
         }
         if (peerConnection.connectionState === 'failed') {
           setError(tInterview.connection.dropped);
@@ -997,11 +1509,57 @@ export default function InterviewPage() {
       setError(err instanceof Error ? err.message : tInterview.errors.startFailed);
       setIsConnecting(false);
       setStatus('idle');
+      stopTimer();
+      pendingTimerConfigRef.current = snapshot
+        ? {
+            remaining:
+              snapshot.timerOption === 'unlimited'
+                ? null
+                : typeof snapshot.secondsRemaining === 'number'
+                ? Math.max(snapshot.secondsRemaining, 0)
+                : selectedTimer.minutes !== null
+                ? selectedTimer.minutes * 60
+                : null,
+            elapsed: snapshot.secondsElapsed,
+            extensionCount: snapshot.extensionCount,
+          }
+        : null;
+      if (snapshot) {
+        setPendingResume(true);
+        setResumeSnapshot(snapshot);
+        sessionIdRef.current = snapshot.sessionId;
+        setSessionId(snapshot.sessionId);
+      }
+      if (!snapshot && typeof window !== 'undefined') {
+        window.localStorage.removeItem('activeInterviewSessionId');
+      }
       cleanupConnection();
     }
-  }, [cleanupConnection, companyId, handleServerEvent, instructionsFallback, isConnecting, isRecording, loadTopicContext, locale, sendSessionBootstrap, setupAnalyserForStream, tInterview]);
+  }, [
+    cleanupConnection,
+    companyId,
+    handleServerEvent,
+    instructionsFallback,
+    isConnecting,
+    isRecording,
+    loadTopicContext,
+    locale,
+    pendingResume,
+    resumeSnapshot,
+    runAutosave,
+    selectedTimer,
+    sendSessionBootstrap,
+    setupAnalyserForStream,
+    startTimer,
+    stopTimer,
+    tInterview,
+    buildTimerAwareInstructions,
+    unlimitedReminderMinutes,
+    timerOption,
+  ]);
 
   const stopInterview = useCallback(async () => {
+    stopTimer();
     if (!sessionIdRef.current) {
       cleanupConnection();
       setIsRecording(false);
@@ -1012,6 +1570,15 @@ export default function InterviewPage() {
     setStopPending(true);
     setIsRecording(false);
     setStatus('ended');
+
+    const finishingSessionId = sessionIdRef.current;
+
+    fireAnalyticsEvent('interview_timer_stopped', {
+      sessionId: finishingSessionId ?? null,
+      secondsElapsed: timerSecondsElapsed,
+      option: timerOption,
+      extensions: timerExtensionCount,
+    });
 
     try {
       const audioBlob = await finalizeRecording();
@@ -1026,18 +1593,145 @@ export default function InterviewPage() {
       console.error('Failed to save interview session:', err);
       setError(err instanceof Error ? err.message : tInterview.errors.persistFailed);
     } finally {
+      if (finishingSessionId) {
+        try {
+          await fetch('/api/interview/autosave', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: finishingSessionId }),
+          });
+        } catch (error) {
+          console.warn('Failed to clear autosave snapshot:', error);
+        }
+      }
       cleanupConnection();
       sessionIdRef.current = null;
       setSessionId(null);
       setStopPending(false);
+      setResumeSnapshot(null);
+      setPendingResume(false);
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('activeInterviewSessionId');
+      }
     }
-  }, [cleanupConnection, companyId, finalizeRecording, persistSession, tInterview.errors.persistFailed]);
+  }, [
+    cleanupConnection,
+    companyId,
+    finalizeRecording,
+    persistSession,
+    stopTimer,
+    tInterview.errors.persistFailed,
+    timerExtensionCount,
+    timerOption,
+    timerSecondsElapsed,
+  ]);
+
+  useEffect(() => {
+    if (!isRecording) {
+      return;
+    }
+    if (timerOption === 'unlimited') {
+      if (unlimitedReminderMinutes <= 0) {
+        return;
+      }
+      const intervalSeconds = unlimitedReminderMinutes * 60;
+      if (intervalSeconds <= 0) {
+        return;
+      }
+      const previousCount = typeof lastReminderAtRef.current === 'number' && lastReminderAtRef.current >= 0 ? lastReminderAtRef.current : 0;
+      const currentCount = Math.floor(timerSecondsElapsed / intervalSeconds);
+      if (currentCount > 0 && currentCount > previousCount) {
+        lastReminderAtRef.current = currentCount;
+        showReminder(
+          formatTemplate(tInterview.timer.reminders.unlimited, {
+            minutes: String(unlimitedReminderMinutes),
+          }),
+          {
+            event: 'interview_timer_reminder',
+            data: {
+              mode: 'unlimited',
+              intervalMinutes: unlimitedReminderMinutes,
+              occurrence: currentCount,
+              sessionId: sessionIdRef.current ?? null,
+            },
+          }
+        );
+      }
+      return;
+    }
+
+    if (timerSecondsRemaining === null) {
+      return;
+    }
+
+    if (timerSecondsRemaining <= 0) {
+      if (!wrapUpTriggeredRef.current) {
+        wrapUpTriggeredRef.current = true;
+        setWrapUpModalOpen(true);
+        const deadline = Date.now() + 60_000;
+        setWrapUpAutoDeadline(deadline);
+        if (wrapUpTimeoutRef.current) {
+          clearTimeout(wrapUpTimeoutRef.current);
+        }
+        wrapUpTimeoutRef.current = setTimeout(() => {
+          stopInterview();
+        }, 60_000);
+        showReminder(tInterview.timer.reminders.autowrap, {
+          event: 'interview_timer_autowrap',
+          data: {
+            sessionId: sessionIdRef.current ?? null,
+          },
+        });
+      }
+      return;
+    }
+
+    if (wrapUpTriggeredRef.current) {
+      wrapUpTriggeredRef.current = false;
+      setWrapUpModalOpen(false);
+      setWrapUpAutoDeadline(null);
+      if (wrapUpTimeoutRef.current) {
+        clearTimeout(wrapUpTimeoutRef.current);
+        wrapUpTimeoutRef.current = null;
+      }
+    }
+
+    if (timerSecondsRemaining <= 60 && lastReminderAtRef.current !== 60) {
+      lastReminderAtRef.current = 60;
+      showReminder(tInterview.timer.reminders.oneMinute, {
+        event: 'interview_timer_warning',
+        data: { thresholdSeconds: 60, sessionId: sessionIdRef.current ?? null },
+      });
+    } else if (timerSecondsRemaining <= 120 && lastReminderAtRef.current !== 120) {
+      lastReminderAtRef.current = 120;
+      showReminder(tInterview.timer.reminders.twoMinutes, {
+        event: 'interview_timer_warning',
+        data: { thresholdSeconds: 120, sessionId: sessionIdRef.current ?? null },
+      });
+    } else if (timerSecondsRemaining <= 300 && lastReminderAtRef.current !== 300) {
+      lastReminderAtRef.current = 300;
+      showReminder(tInterview.timer.reminders.fiveMinutes, {
+        event: 'interview_timer_warning',
+        data: { thresholdSeconds: 300, sessionId: sessionIdRef.current ?? null },
+      });
+    }
+  }, [
+    isRecording,
+    showReminder,
+    stopInterview,
+    tInterview.timer.reminders,
+    timerOption,
+    timerSecondsElapsed,
+    timerSecondsRemaining,
+    unlimitedReminderMinutes,
+  ]);
 
   useEffect(() => {
     return () => {
+      stopTimer();
       cleanupConnection();
     };
-  }, [cleanupConnection]);
+  }, [cleanupConnection, stopTimer]);
 
   useEffect(() => {
     const container = transcriptContainerRef.current;
@@ -1059,6 +1753,31 @@ export default function InterviewPage() {
   const heroDescription = companyName
     ? formatTemplate(tInterview.hero.descriptionWithCompany, { company: companyName })
     : tInterview.hero.description;
+  const timerBadge = useMemo(() => {
+    if (timerOption === 'unlimited') {
+      return {
+        label: tInterview.timer.elapsedLabel,
+        value: formatSeconds(timerSecondsElapsed),
+        tone: 'neutral' as const,
+      };
+    }
+    const fallbackRemaining = selectedTimer.minutes !== null ? selectedTimer.minutes * 60 : 0;
+    const remaining = typeof timerSecondsRemaining === 'number' ? timerSecondsRemaining : fallbackRemaining;
+    let tone: 'neutral' | 'warning' | 'danger' = 'neutral';
+    if (remaining <= 60) {
+      tone = 'danger';
+    } else if (remaining <= 300) {
+      tone = 'warning';
+    }
+    return {
+      label: tInterview.timer.remainingLabel,
+      value: formatSeconds(remaining),
+      tone,
+    };
+  }, [selectedTimer.minutes, tInterview.timer, timerOption, timerSecondsElapsed, timerSecondsRemaining]);
+  const autoWrapCountdown = wrapUpAutoDeadline
+    ? Math.max(0, Math.ceil((wrapUpAutoDeadline - Date.now()) / 1000))
+    : null;
 
   const prioritizedTopics = useMemo(() => {
     if (!coverageProgress || coverageProgress.length === 0) {
@@ -1078,6 +1797,14 @@ export default function InterviewPage() {
           <p className="text-sm leading-relaxed text-slate-600 sm:text-base">{heroDescription}</p>
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge label={statusLabel} status={status} />
+            <TimerPill
+              label={timerBadge.label}
+              value={timerBadge.value}
+              tone={timerBadge.tone}
+              isActive={isRecording}
+              autoWrapSeconds={autoWrapCountdown}
+              texts={tInterview.timer}
+            />
             {companyId ? (
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-sm font-semibold text-emerald-700">
                 <span aria-hidden="true">✓</span>
@@ -1158,7 +1885,44 @@ export default function InterviewPage() {
                 )}
               </button>
             )}
+            <div className="mt-2 text-xs text-slate-400">
+              {autosaveStatus === 'saving'
+                ? tInterview.timer.autosaveSaving
+                : autosaveStatus === 'error'
+                ? tInterview.timer.autosaveError
+                : tInterview.timer.autosaveIdle}
+              {autosaveStatus === 'error' && autosaveError ? (
+                <button
+                  type="button"
+                  className="ml-2 underline transition hover:text-slate-600"
+                  onClick={() => runAutosave('message')}
+                >
+                  {tInterview.timer.autosaveRetry}
+                </button>
+              ) : null}
+            </div>
           </div>
+
+          {resumeSnapshot && !pendingResume ? (
+            <ResumeBanner
+              snapshot={resumeSnapshot}
+              texts={tInterview.timer.resume}
+              onResume={prepareResumeSession}
+              onDiscard={discardResumeSnapshot}
+            />
+          ) : null}
+
+          <TimerSelector
+            option={timerOption}
+            onChange={handleTimerOptionChange}
+            optionTexts={tInterview.timer.options}
+            disabled={isRecording || isConnecting}
+            unlimitedReminderMinutes={unlimitedReminderMinutes}
+            onReminderChange={handleUnlimitedReminderChange}
+            showReminderPicker={timerOption === 'unlimited'}
+            pendingResume={pendingResume}
+            reminderTexts={tInterview.timer.unlimitedReminder}
+          />
 
           <SpeakerIndicator activeSpeaker={activeSpeaker} levels={speakerLevels} labels={tInterview.speaker} />
 
@@ -1170,6 +1934,11 @@ export default function InterviewPage() {
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{tInterview.transcript.title}</h2>
+            {reminderMessage ? (
+              <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-medium text-indigo-700">
+                {reminderMessage}
+              </div>
+            ) : null}
             <div
               ref={transcriptContainerRef}
               className="space-y-4 overflow-y-auto pr-1"
@@ -1211,6 +1980,16 @@ export default function InterviewPage() {
           </div>
 
           <audio ref={audioRef} style={{ display: 'none' }} />
+
+          {wrapUpModalOpen ? (
+            <WrapUpModal
+              texts={tInterview.timer.wrapModal}
+              onStop={stopInterview}
+              onExtend={extendTimer}
+              allowExtend={timerExtensionCount === 0}
+              countdownSeconds={autoWrapCountdown}
+            />
+          ) : null}
 
           {postSessionInfo && (
             <div className="mt-6 rounded-2xl border border-white/60 bg-white/95 p-6 shadow-lg ring-1 ring-slate-900/10 backdrop-blur">
@@ -1331,6 +2110,242 @@ function TopicProgress({ name, coverage, confidence, metricLabel }: { name: stri
       </div>
     </div>
   );
+}
+
+function ResumeBanner({
+  snapshot,
+  texts,
+  onResume,
+  onDiscard,
+}: {
+  snapshot: AutosaveSnapshot;
+  texts: Dictionary['interview']['timer']['resume'];
+  onResume: () => void;
+  onDiscard: () => void;
+}) {
+  const updatedAt = useMemo(() => {
+    try {
+      return new Date(snapshot.updatedAt);
+    } catch (error) {
+      return null;
+    }
+  }, [snapshot.updatedAt]);
+
+  const timerSummary = snapshot.timerOption === 'unlimited'
+    ? texts.timer.unlimited
+    : formatTemplate(texts.timer.timeboxed, {
+        minutes: String(TIMER_OPTIONS.find((option) => option.id === snapshot.timerOption)?.minutes ?? 0),
+      });
+
+  return (
+    <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/80 p-5 text-sm text-amber-900">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold">{texts.title}</h3>
+          <p className="mt-1 text-sm text-amber-800">
+            {formatTemplate(texts.description, {
+              updated:
+                updatedAt && Number.isFinite(updatedAt.getTime())
+                  ? updatedAt.toLocaleString()
+                  : texts.fallbackTimestamp,
+            })}
+          </p>
+          <p className="mt-1 text-xs text-amber-700">{timerSummary}</p>
+        </div>
+        <div className="flex flex-shrink-0 gap-3">
+          <button type="button" onClick={onResume} className="btn-primary px-4 py-2 text-sm">
+            {texts.continueCta}
+          </button>
+          <button type="button" onClick={onDiscard} className="btn-secondary px-4 py-2 text-sm">
+            {texts.discardCta}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TimerSelector({
+  option,
+  onChange,
+  optionTexts,
+  disabled,
+  unlimitedReminderMinutes,
+  onReminderChange,
+  showReminderPicker,
+  pendingResume,
+  reminderTexts,
+}: {
+  option: TimerOptionId;
+  onChange: (option: TimerOptionId) => void;
+  optionTexts: Dictionary['interview']['timer']['options'];
+  disabled: boolean;
+  unlimitedReminderMinutes: number;
+  onReminderChange: (minutes: number) => void;
+  showReminderPicker: boolean;
+  pendingResume: boolean;
+  reminderTexts: Dictionary['interview']['timer']['unlimitedReminder'];
+}) {
+  return (
+    <div className="mb-6 rounded-2xl border border-slate-200/70 bg-white/60 p-5 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {optionTexts.heading}
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {TIMER_OPTIONS.map((opt) => {
+              const text = optionTexts[opt.id];
+              const selected = option === opt.id;
+              return (
+                <label
+                  key={opt.id}
+                  className={`flex cursor-pointer flex-col rounded-xl border px-4 py-3 text-sm transition ${
+                    selected
+                      ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
+                      : disabled
+                      ? 'cursor-not-allowed border-slate-200 bg-white text-slate-400 opacity-70'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="session-length"
+                    value={opt.id}
+                    checked={selected}
+                    disabled={disabled}
+                    onChange={() => onChange(opt.id)}
+                    className="sr-only"
+                  />
+                  <span className="font-semibold">{text.label}</span>
+                  <span className="mt-1 text-xs text-slate-500">{text.description}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <div className="w-full max-w-xs rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+          <p>{optionTexts.guidance}</p>
+          {pendingResume ? <p className="mt-2 font-semibold text-slate-700">{optionTexts.pendingResume}</p> : null}
+        </div>
+      </div>
+      {showReminderPicker ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <span className="font-semibold text-slate-500">{reminderTexts.label}</span>
+          <select
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+            value={unlimitedReminderMinutes}
+            onChange={(event) => onReminderChange(Number(event.target.value))}
+            disabled={disabled}
+          >
+            {UNLIMITED_REMINDER_OPTIONS.map((minutes) => (
+              <option key={minutes} value={minutes}>
+                {minutes === 0
+                  ? reminderTexts.none
+                  : formatTemplate(reminderTexts.every, { minutes: String(minutes) })}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TimerPill({
+  label,
+  value,
+  tone,
+  isActive,
+  autoWrapSeconds,
+  texts,
+}: {
+  label: string;
+  value: string;
+  tone: 'neutral' | 'warning' | 'danger';
+  isActive: boolean;
+  autoWrapSeconds: number | null;
+  texts: Dictionary['interview']['timer'];
+}) {
+  const toneClasses = tone === 'danger'
+    ? 'border-rose-200 bg-rose-50 text-rose-600'
+    : tone === 'warning'
+    ? 'border-amber-200 bg-amber-50 text-amber-700'
+    : 'border-slate-200 bg-slate-50 text-slate-600';
+  const pulseClass = isActive ? 'shadow-sm' : 'opacity-80';
+  return (
+    <span className={`inline-flex min-w-[140px] flex-col rounded-2xl border px-4 py-2 text-xs font-semibold ${toneClasses} ${pulseClass}`}>
+      <span className="uppercase tracking-wide text-[10px] text-current/70">{label}</span>
+      <span className="text-lg font-semibold leading-tight text-current">{value}</span>
+      {autoWrapSeconds !== null ? (
+        <span className="mt-1 text-[11px] font-medium text-current/80">
+          {formatTemplate(texts.autoWrapCountdown, {
+            seconds: formatSeconds(autoWrapSeconds),
+          })}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function formatSeconds(totalSeconds: number): string {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function WrapUpModal({
+  texts,
+  onStop,
+  onExtend,
+  allowExtend,
+  countdownSeconds,
+}: {
+  texts: Dictionary['interview']['timer']['wrapModal'];
+  onStop: () => void;
+  onExtend: () => void;
+  allowExtend: boolean;
+  countdownSeconds: number | null;
+}) {
+  const countdown = countdownSeconds !== null ? formatSeconds(countdownSeconds) : '60';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-slate-900">{texts.title}</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          {formatTemplate(texts.description, { countdown })}
+        </p>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button type="button" className="btn-primary" onClick={onStop}>
+            {texts.stop}
+          </button>
+          <button
+            type="button"
+            className={`btn-secondary ${!allowExtend ? 'cursor-not-allowed opacity-60' : ''}`}
+            onClick={allowExtend ? onExtend : undefined}
+            disabled={!allowExtend}
+          >
+            {allowExtend ? texts.extend : texts.extendDisabled}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function fireAnalyticsEvent(eventName: string, detail: Record<string, unknown>) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(`kh-${eventName}`, { detail }));
+  } catch (error) {
+    console.warn('Failed to dispatch analytics event', eventName, error);
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[analytics]', eventName, detail);
+  }
 }
 
 function SpeakerIndicator({

@@ -13,7 +13,14 @@ const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
-    const { companyId, speakerName, locale } = await request.json();
+    const {
+      companyId,
+      speakerName,
+      locale,
+      resumeSessionId: resumeSessionIdRaw,
+    } = await request.json();
+
+    const resumeSessionId = typeof resumeSessionIdRaw === 'number' ? resumeSessionIdRaw : resumeSessionIdRaw ? Number(resumeSessionIdRaw) : null;
 
     const requestedLocale = typeof locale === 'string' ? locale : 'ja';
 
@@ -54,15 +61,61 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create interview session in database
     const now = new Date();
-    const [session] = await db.insert(interviewSessions).values({
-      companyId,
-      topicTreeId: latestTopicTree?.id ?? null,
-      speakerName: speakerName || null,
-      startedAt: now,
-      status: 'active',
-    }).returning();
+    let sessionRecord: typeof interviewSessions.$inferSelect;
+
+    if (resumeSessionId) {
+      const [existingSession] = await db
+        .select()
+        .from(interviewSessions)
+        .where(eq(interviewSessions.id, resumeSessionId))
+        .limit(1);
+
+      if (!existingSession) {
+        return NextResponse.json(
+          { error: 'Interview session not found for resumeSessionId' },
+          { status: 404 }
+        );
+      }
+
+      if (existingSession.companyId !== companyId) {
+        return NextResponse.json(
+          { error: 'resumeSessionId does not belong to the specified company' },
+          { status: 400 }
+        );
+      }
+
+      const topicTreeIdForSession = existingSession.topicTreeId ?? latestTopicTree?.id ?? null;
+
+      await db
+        .update(interviewSessions)
+        .set({
+          speakerName: speakerName || existingSession.speakerName || null,
+          topicTreeId: topicTreeIdForSession,
+          status: 'active',
+          endedAt: null,
+        })
+        .where(eq(interviewSessions.id, resumeSessionId));
+
+      sessionRecord = {
+        ...existingSession,
+        speakerName: speakerName || existingSession.speakerName || null,
+        topicTreeId: topicTreeIdForSession,
+      };
+    } else {
+      const [session] = await db
+        .insert(interviewSessions)
+        .values({
+          companyId,
+          topicTreeId: latestTopicTree?.id ?? null,
+          speakerName: speakerName || null,
+          startedAt: now,
+          status: 'active',
+        })
+        .returning();
+
+      sessionRecord = session;
+    }
 
     const azureConfig = validateAzureRealtimeConfig();
     if (!azureConfig.valid) {
@@ -105,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      sessionId: session.id,
+      sessionId: sessionRecord.id,
       azureSessionId: payload.id,
       clientSecret,
       expiresAt: payload.expires_at ?? null,
@@ -113,7 +166,7 @@ export async function POST(request: NextRequest) {
       model: REALTIME_DEPLOYMENT,
       voice: REALTIME_VOICE,
       instructions: interviewInstructions,
-      topicTreeId: latestTopicTree?.id ?? null,
+      topicTreeId: sessionRecord.topicTreeId ?? latestTopicTree?.id ?? null,
       companyName: companyRecord.name,
     });
   } catch (error) {

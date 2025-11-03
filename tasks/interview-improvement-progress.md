@@ -6,15 +6,15 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 1. ✅ Draft experiment plan for the Azure Speech streaming spike and schedule benchmark recordings (`tasks/azure-speech-spike-plan.md`).
 2. ✅ Redline interviewer prompt revisions and spec the “current/next question” sidebar components (`tasks/interviewer-prompt-and-queue-notes.md`).
 3. ✅ Design coverage evidence data model updates and tooltip UX (`tasks/coverage-evidence-design.md`).
-4. Implement timer UI and autosave manager once designs are approved.
+4. ✅ Implement timer UI and autosave manager once designs were approved.
 
 ## Now — P0 Scope
 
 ### Session pacing & fatigue guardrails
 - ✅ Define UX for 15/30 minute presets, optional no-limit toggle, and reminder timings (`tasks/session-pacing-autosave-notes.md`).
-- [ ] Implement timer UI with countdown, reminders, and wrap-up flow.
-- [ ] Add background checkpoint saves and resumable session workflow.
-- [ ] Capture session length analytics (events, dashboards).
+- ✅ Implement timer UI with countdown, reminders, and wrap-up flow.
+- ✅ Add background checkpoint saves and resumable session workflow.
+- ✅ Capture session length analytics (events dispatched via `fireAnalyticsEvent`).
 
 ### Transcript accuracy & readability upgrades
 - [ ] Spike Azure Speech streaming integration behind feature flag; capture accuracy metrics vs. Whisper.

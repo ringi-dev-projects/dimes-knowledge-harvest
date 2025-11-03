@@ -233,6 +233,59 @@ type Dictionary = {
       user: string;
       speaking: string;
     };
+    timer: {
+      elapsedLabel: string;
+      remainingLabel: string;
+      autoWrapCountdown: string;
+      instructions: {
+        timeboxed: string;
+        unlimited: string;
+        unlimitedWithReminder: string;
+      };
+      options: {
+        heading: string;
+        guidance: string;
+        pendingResume: string;
+        '15': { label: string; description: string };
+        '30': { label: string; description: string };
+        unlimited: { label: string; description: string };
+      };
+      unlimitedReminder: {
+        label: string;
+        none: string;
+        every: string;
+      };
+      reminders: {
+        fiveMinutes: string;
+        twoMinutes: string;
+        oneMinute: string;
+        autowrap: string;
+        unlimited: string;
+      };
+      autosaveIdle: string;
+      autosaveSaving: string;
+      autosaveError: string;
+      autosaveRetry: string;
+      autosaveFallbackError: string;
+      resume: {
+        title: string;
+        description: string;
+        fallbackTimestamp: string;
+        continueCta: string;
+        discardCta: string;
+        timer: {
+          timeboxed: string;
+          unlimited: string;
+        };
+      };
+      wrapModal: {
+        title: string;
+        description: string;
+        extend: string;
+        extendDisabled: string;
+        stop: string;
+      };
+    };
     ai: {
       instructions: string;
     };
@@ -563,6 +616,71 @@ const en: Dictionary = {
       assistant: 'AI interviewer',
       user: 'You',
       speaking: 'Speaking',
+    },
+    timer: {
+      elapsedLabel: 'Elapsed time',
+      remainingLabel: 'Time remaining',
+      autoWrapCountdown: 'Auto wrap in {{seconds}}',
+      instructions: {
+        timeboxed:
+          'This session is scheduled for {{minutes}} minutes. Keep the conversation efficient and start closing when roughly three minutes remain.',
+        unlimited:
+          'The session is uncapped; watch for fatigue and suggest pausing to summarise when the expert slows down.',
+        unlimitedWithReminder:
+          'The session is uncapped. Offer a quick break every {{minutes}} minutes so the expert can reset and confirm key points.',
+      },
+      options: {
+        heading: 'Session length',
+        guidance: 'Choose how long the AI should pace the interview before prompting a wrap-up.',
+        pendingResume: 'Using the timer from your last autosave.',
+        '15': {
+          label: '15 minutes',
+          description: 'Focused capture and calibration check-ins.',
+        },
+        '30': {
+          label: '30 minutes',
+          description: 'Deep-dive territory without burning out the expert.',
+        },
+        unlimited: {
+          label: 'No limit',
+          description: 'Manual wrap-up with optional reminder pings.',
+        },
+      },
+      unlimitedReminder: {
+        label: 'Break reminders',
+        none: 'Disable reminders',
+        every: 'Every {{minutes}} minutes',
+      },
+      reminders: {
+        fiveMinutes: 'Five minutes left—plan your wrap-up.',
+        twoMinutes: 'Two minutes left—gather any critical gaps.',
+        oneMinute: 'One minute left—summarise and confirm next steps.',
+        autowrap: 'Time is up! Extending once will add five minutes.',
+        unlimited: 'No cap set—suggest pausing to recap before continuing.',
+      },
+      autosaveIdle: 'Autosave ready',
+      autosaveSaving: 'Saving progress…',
+      autosaveError: 'Autosave paused—retry?',
+      autosaveRetry: 'Save now',
+      autosaveFallbackError: 'Autosave failed. We will keep retrying.',
+      resume: {
+        title: 'Resume your previous session?',
+        description: 'We auto-saved this interview at {{updated}}. Continue where you left off or discard the draft.',
+        fallbackTimestamp: 'the last session',
+        continueCta: 'Resume interview',
+        discardCta: 'Discard autosave',
+        timer: {
+          timeboxed: 'Saved with a {{minutes}}-minute timer.',
+          unlimited: 'Saved with no time limit.',
+        },
+      },
+      wrapModal: {
+        title: 'Time to wrap?',
+        description: 'We reached the planned limit. Finish now or extend by five minutes. Auto wrap in {{countdown}}.',
+        extend: 'Extend 5 minutes',
+        extendDisabled: 'Extension already used',
+        stop: 'Wrap up now',
+      },
     },
     ai: {
       instructions:
@@ -899,6 +1017,68 @@ const ja: Dictionary = {
       assistant: 'AIインタビュアー',
       user: 'あなた',
       speaking: '話しています',
+    },
+    timer: {
+      elapsedLabel: '経過時間',
+      remainingLabel: '残り時間',
+      autoWrapCountdown: '{{seconds}}後に自動終了',
+      instructions: {
+        timeboxed: 'このセッションは{{minutes}}分です。残り3分になったら要点をまとめて締めに入りましょう。',
+        unlimited: '制限時間はありません。話し手が疲れた様子なら休憩と振り返りを提案してください。',
+        unlimitedWithReminder: '制限時間はありませんが、{{minutes}}分ごとに短い休憩を促し、要点を確認しましょう。',
+      },
+      options: {
+        heading: 'インタビュー時間',
+        guidance: 'AIが自動で終了を促すタイミングを選択してください。',
+        pendingResume: '前回の自動保存タイマーを使用します。',
+        '15': {
+          label: '15分',
+          description: '短時間でポイントを整理したいときに最適です。',
+        },
+        '30': {
+          label: '30分',
+          description: '深掘りしても疲れにくい長さです。',
+        },
+        unlimited: {
+          label: '無制限',
+          description: '手動終了。必要ならリマインダーを設定できます。',
+        },
+      },
+      unlimitedReminder: {
+        label: '休憩リマインダー',
+        none: 'リマインダーなし',
+        every: '{{minutes}}分ごとに通知',
+      },
+      reminders: {
+        fiveMinutes: '残り5分です。まとめに入りましょう。',
+        twoMinutes: '残り2分です。重要事項を確認しましょう。',
+        oneMinute: '残り1分です。最後の確認をお願いします。',
+        autowrap: '時間になりました。延長しなければ自動終了します。',
+        unlimited: '無制限モードです。定期的に休憩を提案してください。',
+      },
+      autosaveIdle: '自動保存待機中',
+      autosaveSaving: '自動保存中…',
+      autosaveError: '自動保存に失敗しました',
+      autosaveRetry: '再保存する',
+      autosaveFallbackError: '自動保存に失敗しました。しばらくしてから再試行します。',
+      resume: {
+        title: '前回のセッションを再開しますか？',
+        description: '{{updated}} に自動保存しました。続きから再開するか破棄してください。',
+        fallbackTimestamp: '前回のセッション',
+        continueCta: '再開する',
+        discardCta: '破棄する',
+        timer: {
+          timeboxed: '{{minutes}}分のタイマーで保存されています。',
+          unlimited: '制限時間なしで保存されています。',
+        },
+      },
+      wrapModal: {
+        title: 'そろそろ終了しましょうか？',
+        description: '予定した時間に到達しました。今すぐ終了するか、5分延長できます。{{countdown}}後に自動終了します。',
+        extend: '5分延長する',
+        extendDisabled: '延長は1回までです',
+        stop: '今すぐ終了する',
+      },
     },
     ai: {
       instructions:
