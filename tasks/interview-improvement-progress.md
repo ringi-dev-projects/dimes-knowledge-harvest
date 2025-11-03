@@ -24,10 +24,10 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 - [ ] Build reviewer tooling for mistranscription highlighting.
 
 ### Interviewer prompt design & coverage explainability
-- [ ] Revise interviewer system prompt to reduce answer recitation and add confirmation heuristics.
-  - 📝 Locale-aware prompt strategy drafted (`tasks/interviewer-prompt-and-queue-notes.md`).
-- [ ] Surface current/next question queue in the interview UI.
-  - 📝 UX & data flow captured (`tasks/interviewer-prompt-and-queue-notes.md`).
+- ✅ Revise interviewer system prompt to reduce answer recitation and add confirmation heuristics.
+  - 🔄 Implemented in `app/api/realtime/session/route.ts` with queue-aware guidance and short acknowledgement rules.
+- ✅ Surface current/next question queue in the interview UI.
+  - 🔄 Delivered via new queue state, UI components, and autosave integration (`app/interview/page.tsx`).
 - [ ] Overhaul coverage calculation to aggregate all sessions, tie to knowledge atoms, and store trace evidence.
   - 📝 Data model & tooltip design drafted (`tasks/coverage-evidence-design.md`).
 - [ ] Add “Why this %?” explainers referencing transcript spans.

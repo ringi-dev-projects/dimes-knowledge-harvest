@@ -67,6 +67,8 @@ export const interviewAutosaves = pgTable('interview_autosaves', {
   extensionCount: integer('extension_count').notNull().default(0),
   messagesJson: text('messages_json').notNull(),
   coverageJson: text('coverage_json').notNull(),
+  queueJson: text('queue_json').notNull(),
+  feedbackJson: text('feedback_json').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
 

@@ -228,6 +228,22 @@ type Dictionary = {
       suggestedItemSuffix: string;
       metricLabel: string;
     };
+    queue: {
+      currentTitle: string;
+      empty: string;
+      markAnswered: string;
+      skip: string;
+      requiredTag: string;
+      optionalTag: string;
+      feedbackPrompt: string;
+      feedbackPositive: string;
+      feedbackNegative: string;
+      pendingCount: string;
+      nextTitle: string;
+      nextEmpty: string;
+      completedTitle: string;
+      completedEmpty: string;
+    };
     speaker: {
       liveActivity: string;
       assistant: string;
@@ -612,6 +628,22 @@ const en: Dictionary = {
       suggestedItemPrefix: 'Explore more about',
       suggestedItemSuffix: '(currently {{coverage}}% coverage, {{confidence}}% confidence)',
       metricLabel: 'Confidence',
+    },
+    queue: {
+      currentTitle: 'Current question',
+      empty: 'Queue is empty. Add new targets from the Seed page.',
+      markAnswered: 'Mark answered',
+      skip: 'Skip for now',
+      requiredTag: 'Required',
+      optionalTag: 'Optional',
+      feedbackPrompt: 'How helpful was this question?',
+      feedbackPositive: 'Helpful',
+      feedbackNegative: 'Needs work',
+      pendingCount: '{{count}} remaining',
+      nextTitle: 'Next up',
+      nextEmpty: 'No more upcoming prompts.',
+      completedTitle: 'Completed this session',
+      completedEmpty: 'Nothing captured yet.',
     },
     speaker: {
       liveActivity: 'Live activity',
@@ -1014,6 +1046,22 @@ const ja: Dictionary = {
       suggestedItemPrefix: 'さらに深掘り:',
       suggestedItemSuffix: '（現在のカバレッジ {{coverage}}%、信頼度 {{confidence}}%）',
       metricLabel: '信頼度',
+    },
+    queue: {
+      currentTitle: '現在の質問',
+      empty: 'キューは空です。必要ならシードページでターゲットを追加してください。',
+      markAnswered: '回答済みにする',
+      skip: '後で聞く',
+      requiredTag: '必須',
+      optionalTag: '任意',
+      feedbackPrompt: 'この質問は役立ちましたか？',
+      feedbackPositive: '役立った',
+      feedbackNegative: '改善が必要',
+      pendingCount: '残り{{count}}件',
+      nextTitle: '次に予定している質問',
+      nextEmpty: '次の質問はありません。',
+      completedTitle: '今回カバーした質問',
+      completedEmpty: 'まだ記録された質問はありません。',
     },
     speaker: {
       liveActivity: '話者アクティビティ',

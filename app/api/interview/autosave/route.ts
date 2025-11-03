@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
 
     const messagesJson = JSON.stringify(Array.isArray(body?.messages) ? body.messages : []);
     const coverageJson = JSON.stringify(Array.isArray(body?.coverage) ? body.coverage : []);
+    const queueJson = JSON.stringify(body?.queue ?? { current: null, pending: [], completed: [] });
+    const feedbackJson = JSON.stringify(body?.feedback ?? {});
 
     await db
       .insert(interviewAutosaves)
@@ -49,6 +51,8 @@ export async function POST(request: NextRequest) {
         extensionCount,
         messagesJson,
         coverageJson,
+        queueJson,
+        feedbackJson,
         updatedAt,
       })
       .onConflictDoUpdate({
@@ -60,6 +64,8 @@ export async function POST(request: NextRequest) {
           extensionCount,
           messagesJson,
           coverageJson,
+          queueJson,
+          feedbackJson,
           updatedAt,
         },
       });
@@ -93,6 +99,8 @@ export async function GET(request: NextRequest) {
 
     let messages: unknown = [];
     let coverage: unknown = [];
+    let queue: unknown = { current: null, pending: [], completed: [] };
+    let feedback: unknown = {};
 
     try {
       messages = JSON.parse(row.messagesJson ?? '[]');
@@ -106,6 +114,18 @@ export async function GET(request: NextRequest) {
       console.warn('Failed to parse autosave coverage JSON:', error);
     }
 
+    try {
+      queue = JSON.parse(row.queueJson ?? '{}');
+    } catch (error) {
+      console.warn('Failed to parse autosave queue JSON:', error);
+    }
+
+    try {
+      feedback = JSON.parse(row.feedbackJson ?? '{}');
+    } catch (error) {
+      console.warn('Failed to parse autosave feedback JSON:', error);
+    }
+
     return NextResponse.json({
       success: true,
       snapshot: {
@@ -116,6 +136,8 @@ export async function GET(request: NextRequest) {
         extensionCount: row.extensionCount ?? 0,
         messages,
         coverage,
+        queue,
+        feedback,
         updatedAt: row.updatedAt?.toISOString() ?? new Date().toISOString(),
       },
     });

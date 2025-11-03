@@ -54,8 +54,28 @@ interface AutosaveSnapshot {
   extensionCount: number;
   coverage: CoverageEntry[];
   messages: InterviewMessage[];
+  queue?: QuestionQueueSnapshot;
+  feedback?: QuestionFeedbackMap;
   updatedAt: string;
 }
+
+interface QuestionQueueItem {
+  topicId: string;
+  topicName: string;
+  targetId: string;
+  question: string;
+  required: boolean;
+  weight: number;
+  status: 'pending' | 'answered' | 'skipped';
+}
+
+interface QuestionQueueSnapshot {
+  current: QuestionQueueItem | null;
+  pending: QuestionQueueItem[];
+  completed: QuestionQueueItem[];
+}
+
+type QuestionFeedbackMap = Record<string, 'up' | 'down'>;
 
 const TRANSCRIPTION_MODEL = 'whisper-1';
 
@@ -134,6 +154,12 @@ export default function InterviewPage() {
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [unlimitedReminderMinutes, setUnlimitedReminderMinutes] = useState(20);
   const [reminderMessage, setReminderMessage] = useState<string | null>(null);
+  const [queueState, setQueueState] = useState<QuestionQueueSnapshot>({
+    current: null,
+    pending: [],
+    completed: [],
+  });
+  const [questionFeedback, setQuestionFeedback] = useState<QuestionFeedbackMap>({});
 
   const sessionIdRef = useRef<number | null>(null);
   const messagesRef = useRef<InterviewMessage[]>([]);
@@ -172,6 +198,9 @@ export default function InterviewPage() {
   const activeSessionStartedAtRef = useRef<number | null>(null);
   const reminderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingTimerConfigRef = useRef<{ remaining: number | null; elapsed: number; extensionCount: number } | null>(null);
+  const queueStateRef = useRef<QuestionQueueSnapshot>(queueState);
+  const questionFeedbackRef = useRef<QuestionFeedbackMap>(questionFeedback);
+  const topicTreeRef = useRef<TopicNode[]>([]);
 
   const [activeSpeaker, setActiveSpeaker] = useState<'assistant' | 'user' | null>(null);
   const [postSessionInfo, setPostSessionInfo] = useState<{ sessionId: number; companyId?: number | null } | null>(null);
@@ -209,6 +238,16 @@ export default function InterviewPage() {
             });
           };
           flatten(topicEntries);
+          topicTreeRef.current = topicEntries;
+          if (!pendingResume && !resumeSnapshot && !isRecording) {
+            const currentQueue = queueStateRef.current;
+            if (!currentQueue.current && currentQueue.pending.length === 0) {
+              const nextQueue = buildInitialQueue(topicEntries);
+              queueStateRef.current = nextQueue;
+              setQueueState(nextQueue);
+              setQuestionFeedback({});
+            }
+          }
         }
       }
 
@@ -266,7 +305,7 @@ export default function InterviewPage() {
     } finally {
       setCoverageLoading(false);
     }
-  }, [companyId, defaultCoverageTopics]);
+  }, [buildInitialQueue, companyId, defaultCoverageTopics, isRecording, pendingResume, resumeSnapshot]);
 
   useEffect(() => {
     if (companyId) {
@@ -548,6 +587,87 @@ export default function InterviewPage() {
     [tInterview.timer.instructions]
   );
 
+  const buildInitialQueue = useCallback((topics: TopicNode[]): QuestionQueueSnapshot => {
+    const items: QuestionQueueItem[] = [];
+    const walk = (nodes: TopicNode[]) => {
+      nodes.forEach((node) => {
+        if (node.targets && node.targets.length > 0) {
+          node.targets.forEach((target) => {
+            items.push({
+              topicId: node.id,
+              topicName: node.name,
+              targetId: target.id,
+              question: target.q,
+              required: target.required,
+              weight: node.weight ?? 1,
+              status: 'pending',
+            });
+          });
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      });
+    };
+    walk(topics);
+    items.sort((a, b) => {
+      if (a.required !== b.required) {
+        return a.required ? -1 : 1;
+      }
+      if ((b.weight ?? 0) !== (a.weight ?? 0)) {
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      }
+      return a.question.localeCompare(b.question);
+    });
+    const [first, ...rest] = items;
+    return {
+      current: first ?? null,
+      pending: rest,
+      completed: [],
+    };
+  }, []);
+
+  const sendQueueUpdate = useCallback(() => {
+    const channel = dataChannelRef.current;
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+    const snapshot = queueStateRef.current;
+    const serializeItem = (item: QuestionQueueItem | null) =>
+      item
+        ? {
+            topicId: item.topicId,
+            topicName: item.topicName,
+            targetId: item.targetId,
+            question: item.question,
+            required: item.required,
+            status: item.status,
+          }
+        : null;
+    const payload = {
+      type: 'question_queue.update',
+      queue: {
+        current: serializeItem(snapshot.current),
+        pending: snapshot.pending.slice(0, 5).map(serializeItem),
+        completed: snapshot.completed.slice(-5).map(serializeItem),
+      },
+    };
+    try {
+      channel.send(JSON.stringify(payload));
+    } catch (error) {
+      console.warn('Failed to send question queue payload:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    queueStateRef.current = queueState;
+    sendQueueUpdate();
+  }, [queueState, sendQueueUpdate]);
+
+  useEffect(() => {
+    questionFeedbackRef.current = questionFeedback;
+  }, [questionFeedback]);
+
   const handleAzureRecognizing = useCallback(
     (result: SpeechRecognitionResult) => {
       if (!result) {
@@ -651,11 +771,13 @@ export default function InterviewPage() {
             secondsRemaining: timerSecondsRemaining,
             secondsElapsed: timerSecondsElapsed,
             extensionCount: timerExtensionCount,
-            coverage: coverageProgress,
-            messages: messagesRef.current,
-            updatedAt: new Date().toISOString(),
-          }),
-        });
+          coverage: coverageProgress,
+          messages: messagesRef.current,
+          queue: queueStateRef.current,
+          feedback: questionFeedbackRef.current,
+          updatedAt: new Date().toISOString(),
+        }),
+      });
         if (!response.ok) {
           let message = 'Autosave failed';
           try {
@@ -808,6 +930,24 @@ export default function InterviewPage() {
       },
       tools: TOOL_DEFINITIONS,
       tool_choice: 'auto',
+      metadata: {
+        queue: {
+          current: queueStateRef.current.current
+            ? {
+                topicId: queueStateRef.current.current.topicId,
+                targetId: queueStateRef.current.current.targetId,
+                question: queueStateRef.current.current.question,
+                required: queueStateRef.current.current.required,
+              }
+            : null,
+          pending: queueStateRef.current.pending.slice(0, 5).map((item) => ({
+            topicId: item.topicId,
+            targetId: item.targetId,
+            question: item.question,
+            required: item.required,
+          })),
+        },
+      },
     };
 
     if (!isAzureTranscription) {
@@ -823,7 +963,8 @@ export default function InterviewPage() {
     };
 
     channel.send(JSON.stringify(payload));
-  }, [instructionsFallback, isAzureTranscription, transcriptionLanguage]);
+    sendQueueUpdate();
+  }, [instructionsFallback, isAzureTranscription, sendQueueUpdate, transcriptionLanguage]);
 
   const handleFunctionCall = useCallback(
     (callId: string, buffer: { name?: string; args: string }) => {
@@ -1350,6 +1491,15 @@ export default function InterviewPage() {
     setMessages(resumeSnapshot.messages);
     messagesRef.current = resumeSnapshot.messages;
     setCoverageProgress(resumeSnapshot.coverage);
+    if (resumeSnapshot.queue) {
+      setQueueState(resumeSnapshot.queue);
+    } else if (topicTreeRef.current.length > 0) {
+      const nextQueue = buildInitialQueue(topicTreeRef.current);
+      setQueueState(nextQueue);
+    }
+    if (resumeSnapshot.feedback) {
+      setQuestionFeedback(resumeSnapshot.feedback);
+    }
     sessionIdRef.current = resumeSnapshot.sessionId;
     setSessionId(resumeSnapshot.sessionId);
     lastAutosaveAtRef.current = Date.now();
@@ -1365,7 +1515,7 @@ export default function InterviewPage() {
       elapsed: resumeSnapshot.secondsElapsed,
       extensionCount: resumeSnapshot.extensionCount,
     };
-  }, [resumeSnapshot, setCoverageProgress, setMessages]);
+  }, [buildInitialQueue, resumeSnapshot, setCoverageProgress, setMessages]);
 
   const discardResumeSnapshot = useCallback(async () => {
     if (!resumeSnapshot) {
@@ -1393,8 +1543,18 @@ export default function InterviewPage() {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('activeInterviewSessionId');
       }
+      if (topicTreeRef.current.length > 0) {
+        const nextQueue = buildInitialQueue(topicTreeRef.current);
+        queueStateRef.current = nextQueue;
+        setQueueState(nextQueue);
+      } else {
+        const emptyQueue: QuestionQueueSnapshot = { current: null, pending: [], completed: [] };
+        queueStateRef.current = emptyQueue;
+        setQueueState(emptyQueue);
+      }
+      setQuestionFeedback({});
     }
-  }, [resetTimerForOption, resumeSnapshot]);
+  }, [buildInitialQueue, resetTimerForOption, resumeSnapshot]);
 
   const handleTimerOptionChange = useCallback(
     (optionId: TimerOptionId) => {
@@ -1896,6 +2056,78 @@ export default function InterviewPage() {
   const autoWrapCountdown = wrapUpAutoDeadline
     ? Math.max(0, Math.ceil((wrapUpAutoDeadline - Date.now()) / 1000))
     : null;
+  const currentQuestion = queueState.current;
+  const pendingQuestions = queueState.pending;
+  const completedQuestions = queueState.completed;
+
+  const handleMarkCurrentAnswered = useCallback(() => {
+    setQueueState((prev) => {
+      if (!prev.current) {
+        return prev;
+      }
+      const current = prev.current;
+      fireAnalyticsEvent('interview_queue_mark_answered', {
+        targetId: current.targetId,
+        topicId: current.topicId,
+        sessionId: sessionIdRef.current ?? null,
+      });
+      const completedEntry: QuestionQueueItem = { ...current, status: 'answered' };
+      const [next, ...rest] = prev.pending;
+      return {
+        current: next ?? null,
+        pending: rest,
+        completed: [...prev.completed, completedEntry],
+      };
+    });
+  }, []);
+
+  const handleSkipCurrent = useCallback(() => {
+    setQueueState((prev) => {
+      if (!prev.current) {
+        return prev;
+      }
+      const current = prev.current;
+      fireAnalyticsEvent('interview_queue_skipped', {
+        targetId: current.targetId,
+        topicId: current.topicId,
+        sessionId: sessionIdRef.current ?? null,
+      });
+      const skipped: QuestionQueueItem = { ...current, status: 'skipped' };
+      const [next, ...rest] = prev.pending;
+      return {
+        current: next ?? null,
+        pending: [...rest, skipped],
+        completed: prev.completed,
+      };
+    });
+  }, []);
+
+  const handleQuestionFeedback = useCallback(
+    (targetId: string, rating: 'up' | 'down') => {
+      if (!sessionIdRef.current) {
+        return;
+      }
+      setQuestionFeedback((prev) => {
+        const next = { ...prev, [targetId]: rating };
+        return next;
+      });
+      fireAnalyticsEvent('interview_queue_feedback', {
+        targetId,
+        rating,
+        sessionId: sessionIdRef.current,
+      });
+      fetch('/api/interview/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionIdRef.current,
+          targetId,
+          rating,
+        }),
+      }).catch((error) => console.warn('Feedback submit failed:', error));
+    },
+    []
+  );
 
   const prioritizedTopics = useMemo(() => {
     if (!coverageProgress || coverageProgress.length === 0) {
@@ -2040,6 +2272,22 @@ export default function InterviewPage() {
             showReminderPicker={timerOption === 'unlimited'}
             pendingResume={pendingResume}
             reminderTexts={tInterview.timer.unlimitedReminder}
+          />
+
+          <CurrentQuestionCard
+            question={currentQuestion}
+            pendingCount={pendingQuestions.length}
+            onMarkAnswered={handleMarkCurrentAnswered}
+            onSkip={handleSkipCurrent}
+            onFeedback={handleQuestionFeedback}
+            feedback={currentQuestion ? questionFeedback[currentQuestion.targetId] ?? null : null}
+            texts={tInterview.queue}
+          />
+
+          <QuestionQueueList
+            pending={pendingQuestions}
+            completed={completedQuestions}
+            texts={tInterview.queue}
           />
 
           <SpeakerIndicator activeSpeaker={activeSpeaker} levels={speakerLevels} labels={tInterview.speaker} />
@@ -2449,6 +2697,151 @@ function WrapUpModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function CurrentQuestionCard({
+  question,
+  pendingCount,
+  onMarkAnswered,
+  onSkip,
+  onFeedback,
+  feedback,
+  texts,
+}: {
+  question: QuestionQueueItem | null;
+  pendingCount: number;
+  onMarkAnswered: () => void;
+  onSkip: () => void;
+  onFeedback: (targetId: string, rating: 'up' | 'down') => void;
+  feedback: 'up' | 'down' | null;
+  texts: Dictionary['interview']['queue'];
+}) {
+  if (!question) {
+    return (
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white/70 p-6 text-sm text-slate-500">
+        {texts.empty}
+      </div>
+    );
+  }
+
+  const pendingLabel = formatTemplate(texts.pendingCount, { count: String(pendingCount) });
+
+  return (
+    <div className="mb-6 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-indigo-600">
+            {texts.currentTitle}
+          </span>
+          <h3 className="text-lg font-semibold text-slate-900">{question.question}</h3>
+          <p className="text-sm text-slate-500">
+            {question.topicName} · {pendingLabel}
+          </p>
+        </div>
+        <span
+          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+            question.required ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
+          }`}
+        >
+          {question.required ? texts.requiredTag : texts.optionalTag}
+        </span>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button type="button" className="btn-primary" onClick={onMarkAnswered}>
+          {texts.markAnswered}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onSkip}>
+          {texts.skip}
+        </button>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span className="font-semibold text-slate-500">{texts.feedbackPrompt}</span>
+        <FeedbackChip
+          label={texts.feedbackPositive}
+          active={feedback === 'up'}
+          onClick={() => onFeedback(question.targetId, 'up')}
+        />
+        <FeedbackChip
+          label={texts.feedbackNegative}
+          active={feedback === 'down'}
+          onClick={() => onFeedback(question.targetId, 'down')}
+        />
+      </div>
+    </div>
+  );
+}
+
+function QuestionQueueList({
+  pending,
+  completed,
+  texts,
+}: {
+  pending: QuestionQueueItem[];
+  completed: QuestionQueueItem[];
+  texts: Dictionary['interview']['queue'];
+}) {
+  return (
+    <div className="mb-6 grid gap-4 lg:grid-cols-2">
+      <div className="rounded-2xl border border-slate-200 bg-white/80 p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700">{texts.nextTitle}</h3>
+          <span className="text-xs text-slate-400">{formatTemplate(texts.pendingCount, { count: String(pending.length) })}</span>
+        </div>
+        <ul className="mt-3 space-y-2 text-sm text-slate-600">
+          {pending.length === 0 ? (
+            <li>{texts.nextEmpty}</li>
+          ) : (
+            pending.slice(0, 5).map((item) => (
+              <li key={item.targetId} className="rounded-xl bg-slate-100 px-3 py-2">
+                <span className="font-medium text-slate-700">{item.topicName}</span>
+                <span className="ml-2 text-xs uppercase tracking-wide text-slate-400">
+                  {item.required ? texts.requiredTag : texts.optionalTag}
+                </span>
+                <p className="mt-1 text-slate-600">{item.question}</p>
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
+      <div className="rounded-2xl border border-slate-200 bg-white/80 p-5">
+        <h3 className="text-sm font-semibold text-slate-700">{texts.completedTitle}</h3>
+        <ul className="mt-3 space-y-2 text-sm text-slate-500">
+          {completed.length === 0 ? (
+            <li>{texts.completedEmpty}</li>
+          ) : (
+            completed.slice(-5).reverse().map((item) => (
+              <li key={`${item.targetId}-${item.status}`} className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-700">
+                <span className="font-semibold">{item.topicName}</span>
+                <p className="mt-1 text-sm">{item.question}</p>
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+        active ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
