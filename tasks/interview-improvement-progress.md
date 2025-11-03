@@ -4,8 +4,8 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 
 ## Upcoming Actions (P0 Execution Order)
 1. Assemble benchmarking dataset & measure Azure Speech vs. Whisper accuracy (per `tasks/azure-speech-spike-plan.md`).
-2. Reduce agent repetition and ship question queue (per `tasks/interviewer-prompt-and-queue-notes.md`).
-3. Implement coverage evidence persistence and tooltip UX (per `tasks/coverage-evidence-design.md`).
+2. Implement transcript chunk merging, draft vs. verified presentation, and reviewer tooling.
+3. QA coverage evidence at scale and prepare admin audit endpoint.
 
 ## Now — P0 Scope
 
@@ -28,9 +28,9 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
   - 🔄 Implemented in `app/api/realtime/session/route.ts` with queue-aware guidance and short acknowledgement rules.
 - ✅ Surface current/next question queue in the interview UI.
   - 🔄 Delivered via new queue state, UI components, and autosave integration (`app/interview/page.tsx`).
-- [ ] Overhaul coverage calculation to aggregate all sessions, tie to knowledge atoms, and store trace evidence.
+- ✅ Overhaul coverage calculation to aggregate all sessions, tie to knowledge atoms, and store trace evidence.
   - 📝 Data model & tooltip design drafted (`tasks/coverage-evidence-design.md`).
-- [ ] Add “Why this %?” explainers referencing transcript spans.
+- ✅ Add “Why this %?” explainers referencing transcript spans.
   - 📝 Tooltip content & modal workflow defined (`tasks/coverage-evidence-design.md`).
 
 ## Soon — P1 Polish

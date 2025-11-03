@@ -55,8 +55,24 @@ export const coverageScores = pgTable('coverage_scores', {
   topicId: text('topic_id').notNull(),
   targetQuestions: integer('target_questions').notNull(),
   answeredQuestions: integer('answered_questions').notNull(),
+  coveragePercent: integer('coverage_percent').notNull().default(0),
   confidence: real('confidence').notNull(),
+  evidenceCount: integer('evidence_count').notNull().default(0),
+  lastEvidenceAt: timestamp('last_evidence_at', { withTimezone: true }),
   lastUpdated: timestamp('last_updated', { withTimezone: true }).notNull(),
+});
+
+export const coverageEvidence = pgTable('coverage_evidence', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  topicId: text('topic_id').notNull(),
+  targetId: text('target_id'),
+  knowledgeAtomId: integer('knowledge_atom_id').references(() => knowledgeAtoms.id, { onDelete: 'cascade' }),
+  qaTurnId: integer('qa_turn_id').references(() => qaTurns.id, { onDelete: 'cascade' }),
+  confidence: real('confidence').notNull().default(0),
+  evidenceType: text('evidence_type').notNull(),
+  excerpt: text('excerpt'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
 export const interviewAutosaves = pgTable('interview_autosaves', {

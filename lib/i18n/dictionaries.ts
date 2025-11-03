@@ -98,6 +98,7 @@ type Dictionary = {
         coverageLabel: string;
         confidenceLabel: string;
         nextQuestions: string;
+        evidenceLabel: string;
       };
     };
     admin: {
@@ -491,6 +492,7 @@ const en: Dictionary = {
         coverageLabel: 'Coverage',
         confidenceLabel: 'Confidence',
         nextQuestions: 'Next Questions to Ask',
+        evidenceLabel: 'Recent Evidence',
       },
     },
   },
@@ -910,6 +912,7 @@ const ja: Dictionary = {
         coverageLabel: 'カバレッジ',
         confidenceLabel: '信頼度',
         nextQuestions: '次に質問する項目',
+        evidenceLabel: '最新のエビデンス',
       },
     },
   },

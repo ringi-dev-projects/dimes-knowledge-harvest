@@ -80,3 +80,9 @@ const interviewerProfile = {
 - Should the “Current question” card be editable to adjust phrasing mid-session?
 - Do we need a dedicated “Hold on this topic” control if experts want to dive deeper before moving on?
 - How do we surface queue controls for mobile users without crowding the layout?
+
+## Implementation Status (2025-11-04)
+- ✅ Queue state and controls live in `app/interview/page.tsx` with autosave/resume support and data-channel updates.
+- ✅ System prompt updated to follow the queue and minimise recaps (`app/api/realtime/session/route.ts`).
+- ✅ Feedback chips persist ratings via `/api/interview/feedback` and analytics events.
+- 🔄 Follow-up: evaluate mobile layout adjustments and integrate queue analytics into dashboards.

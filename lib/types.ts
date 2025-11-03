@@ -49,6 +49,18 @@ export interface CoverageMetrics {
   coveragePercent: number;
   confidence: number;
   nextQuestions: string[];
+  evidenceSummary?: CoverageEvidenceSummary[];
+}
+
+export interface CoverageEvidenceSummary {
+  id: number;
+  evidenceType: 'knowledge_atom' | 'qa_turn' | 'manual_note';
+  confidence: number;
+  excerpt: string | null;
+  targetId?: string | null;
+  knowledgeAtomId?: number | null;
+  qaTurnId?: number | null;
+  createdAt: string;
 }
 
 // Interview Types

@@ -591,16 +591,35 @@ function TopicCoverageRow({ metric, coverageCopy }: { metric: CoverageMetrics; c
         </button>
       </div>
 
-      {expanded && metric.nextQuestions && metric.nextQuestions.length > 0 && (
-        <div className="border-t border-slate-200/80 bg-slate-50/60 px-6 py-5">
-          <h4 className="mb-3 text-sm font-semibold text-slate-700">{coverageCopy.nextQuestions}</h4>
-          <ul className="space-y-1">
-            {metric.nextQuestions.slice(0, 5).map((question, idx) => (
-              <li key={idx} className="text-sm text-slate-600">
-                • {question}
-              </li>
-            ))}
-          </ul>
+      {expanded && (
+        <div className="space-y-4 border-t border-slate-200/80 bg-slate-50/60 px-6 py-5">
+          {metric.nextQuestions && metric.nextQuestions.length > 0 ? (
+            <div>
+              <h4 className="mb-3 text-sm font-semibold text-slate-700">{coverageCopy.nextQuestions}</h4>
+              <ul className="space-y-1">
+                {metric.nextQuestions.slice(0, 5).map((question, idx) => (
+                  <li key={idx} className="text-sm text-slate-600">
+                    • {question}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {metric.evidenceSummary && metric.evidenceSummary.length > 0 ? (
+            <div>
+              <h4 className="mb-3 text-sm font-semibold text-slate-700">{coverageCopy.evidenceLabel}</h4>
+              <ul className="space-y-2">
+                {metric.evidenceSummary.slice(0, 5).map((item) => (
+                  <li key={item.id} className="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-600">
+                    <span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">
+                      {item.evidenceType.replace('_', ' ')} · {Math.round((item.confidence ?? 0) * 100)}%
+                    </span>
+                    <p className="text-slate-700">{item.excerpt ?? '—'}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

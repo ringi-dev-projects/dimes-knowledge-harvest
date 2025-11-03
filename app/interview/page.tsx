@@ -6,6 +6,7 @@ import type { InterviewMessage } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
 import { useLocale } from '@/lib/context/LocaleContext';
 import type { Dictionary } from '@/lib/i18n/dictionaries';
+import type { CoverageEvidenceSummary } from '@/lib/types';
 import type { SpeechRecognitionResult } from 'microsoft-cognitiveservices-speech-sdk';
 import { useAzureSpeechRecognizer } from './useAzureSpeechRecognizer';
 
@@ -29,6 +30,8 @@ interface CoverageEntry {
   topicName: string;
   coverage: number;
   confidence: number;
+  nextQuestions: string[];
+  evidence: CoverageEvidenceSummary[];
 }
 
 interface TopicNode {
@@ -258,6 +261,8 @@ export default function InterviewPage() {
           topicName: topic.name,
           coverage: 0,
           confidence: 0,
+          nextQuestions: topic.targets?.map((target) => target.q).slice(0, 3) ?? [],
+          evidence: [],
         }));
       }
 
@@ -268,6 +273,8 @@ export default function InterviewPage() {
           topicName: metric.topicName,
           coverage: metric.coveragePercent,
           confidence: metric.confidence,
+          nextQuestions: metric.nextQuestions ?? [],
+          evidence: metric.evidenceSummary ?? [],
         }));
 
         if (initialCoverage.length === 0) {
@@ -276,7 +283,13 @@ export default function InterviewPage() {
           initialCoverage = initialCoverage.map((entry) => {
             const match = metrics.find((metric) => metric.topicId === entry.topicId);
             return match
-              ? { ...entry, coverage: match.coverage, confidence: match.confidence }
+              ? {
+                  ...entry,
+                  coverage: match.coverage,
+                  confidence: match.confidence,
+                  nextQuestions: match.nextQuestions,
+                  evidence: match.evidence,
+                }
               : entry;
           });
         }
@@ -288,6 +301,8 @@ export default function InterviewPage() {
           topicName: topic.name,
           coverage: 0,
           confidence: 0,
+          nextQuestions: [],
+          evidence: [],
         }));
       }
 
@@ -300,6 +315,8 @@ export default function InterviewPage() {
           topicName: topic.name,
           coverage: 0,
           confidence: 0,
+          nextQuestions: [],
+          evidence: [],
         }))
       );
     } finally {
@@ -1008,6 +1025,8 @@ export default function InterviewPage() {
                 topicName,
                 coverage: Math.max(0, Math.min(100, coverageValue)),
                 confidence: Math.max(0, Math.min(100, confidenceValue)),
+                nextQuestions: [],
+                evidence: [],
               },
             ];
           });
@@ -1490,7 +1509,13 @@ export default function InterviewPage() {
     setTimerExtensionCount(resumeSnapshot.extensionCount);
     setMessages(resumeSnapshot.messages);
     messagesRef.current = resumeSnapshot.messages;
-    setCoverageProgress(resumeSnapshot.coverage);
+    setCoverageProgress(
+      resumeSnapshot.coverage.map((entry) => ({
+        ...entry,
+        nextQuestions: entry.nextQuestions ?? [],
+        evidence: entry.evidence ?? [],
+      }))
+    );
     if (resumeSnapshot.queue) {
       setQueueState(resumeSnapshot.queue);
     } else if (topicTreeRef.current.length > 0) {
@@ -2401,6 +2426,8 @@ export default function InterviewPage() {
                   coverage={Math.round(entry.coverage)}
                   confidence={Math.round(entry.confidence)}
                   metricLabel={tInterview.coverage.metricLabel}
+                  evidence={entry.evidence}
+                  nextQuestions={entry.nextQuestions}
                 />
               ))
             )}
@@ -2420,6 +2447,9 @@ export default function InterviewPage() {
                       coverage: String(Math.round(topic.coverage)),
                       confidence: String(Math.round(topic.confidence)),
                     })}
+                    {topic.nextQuestions && topic.nextQuestions.length > 0 ? (
+                      <span className="ml-2 text-xs text-slate-400">{topic.nextQuestions[0]}</span>
+                    ) : null}
                   </li>
                 ))
               )}
@@ -2456,9 +2486,25 @@ function Spinner() {
   );
 }
 
-function TopicProgress({ name, coverage, confidence, metricLabel }: { name: string; coverage: number; confidence: number; metricLabel: string }) {
+function TopicProgress({
+  name,
+  coverage,
+  confidence,
+  metricLabel,
+  evidence,
+  nextQuestions,
+}: {
+  name: string;
+  coverage: number;
+  confidence: number;
+  metricLabel: string;
+  evidence?: CoverageEvidenceSummary[];
+  nextQuestions?: string[];
+}) {
   const safeCoverage = Math.max(0, Math.min(100, coverage));
   const safeConfidence = Math.max(0, Math.min(100, confidence));
+  const evidenceList = evidence ?? [];
+  const questions = nextQuestions ?? [];
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -2474,6 +2520,31 @@ function TopicProgress({ name, coverage, confidence, metricLabel }: { name: stri
       <div className="text-xs text-slate-400">
         {metricLabel}: <span className="font-semibold text-slate-600">{Math.round(safeConfidence)}%</span>
       </div>
+      {evidenceList.length > 0 ? (
+        <details className="rounded-lg border border-slate-200 bg-white/70 p-3 text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold text-slate-600">Evidence ({evidenceList.length})</summary>
+          <ul className="mt-2 space-y-2">
+            {evidenceList.slice(0, 5).map((item) => (
+              <li key={item.id} className="rounded bg-slate-100 px-3 py-2 text-slate-600">
+                <span className="block text-[10px] uppercase tracking-wide text-slate-400">
+                  {item.evidenceType.replace('_', ' ')} · {Math.round((item.confidence ?? 0) * 100)}%
+                </span>
+                <p className="mt-1 text-xs text-slate-600">{item.excerpt ?? '—'}</p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {questions.length > 0 ? (
+        <details className="rounded-lg border border-slate-200 bg-white/70 p-3 text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold text-slate-600">Open questions</summary>
+          <ul className="mt-2 space-y-1 list-disc pl-4">
+            {questions.slice(0, 5).map((q, idx) => (
+              <li key={idx}>{q}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

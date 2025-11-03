@@ -78,3 +78,11 @@ Purpose: overhaul coverage calculations so every percentage is grounded in knowl
 4. Implement dashboard tooltip UI and modal.
 5. Wire interview sidebar evidence drawer & update autosave payload with evidence references.
 6. QA, telemetry checks, release toggled behind feature flag `ENABLE_EVIDENCE_TOOLTIP`.
+
+## Implementation Status (2025-11-04)
+- ✅ Database schema extended via draft migration `drizzle/0001_queue_and_evidence.sql` (adds `coverage_evidence`, augments `coverage_scores`, and enriches autosave payload).
+- ✅ Knowledge extraction now stores coverage evidence for both knowledge atoms and Q&A turns (`app/api/knowledge/extract/route.ts`).
+- ✅ Coverage calculation + API rewritten to aggregate evidence, compute percentages, and expose summaries (`app/api/coverage/calculate/route.ts`, `app/api/coverage/route.ts`).
+- ✅ Dashboard and interview UIs surface evidence + remaining questions with expandable details (`app/dashboard/page.tsx`, `app/interview/page.tsx`).
+- ✅ Autosave/resume captures queue, feedback, and evidence-aware state so interrupted sessions can resume without losing context.
+- 🔄 Pending: formal DB migration execution in shared environments and extended QA on large evidence sets.

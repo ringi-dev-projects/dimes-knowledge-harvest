@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { companies, topicTrees, interviewSessions, qaTurns, coverageScores } from '@/lib/db/schema';
+import { topicTrees, interviewSessions, coverageScores, coverageEvidence } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { TopicTree, Topic } from '@/lib/types';
+import type { TopicTree, Topic, CoverageEvidenceSummary } from '@/lib/types';
 
 /**
  * Calculate coverage scores for a company based on interview data
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     // Get all completed interview sessions for this company
     const sessions = await db
-      .select()
+      .select({ id: interviewSessions.id })
       .from(interviewSessions)
       .where(
         and(
@@ -46,74 +46,93 @@ export async function POST(request: NextRequest) {
         )
       );
 
-    if (sessions.length === 0) {
-      return NextResponse.json(
-        { error: 'No completed interviews found' },
-        { status: 404 }
-      );
-    }
+    const sessionIds = sessions.map((session) => session.id);
 
-    // Get all Q&A turns from these sessions
-    const sessionIds = sessions.map(s => s.id);
-    const allQaTurns = await db
+    const evidenceRows = await db
       .select()
-      .from(qaTurns)
-      .where(eq(qaTurns.sessionId, sessionIds[0])); // Simplified for now
+      .from(coverageEvidence)
+      .where(eq(coverageEvidence.companyId, companyId));
 
-    // Calculate coverage for each topic
-    const coverageResults: any[] = [];
+    const now = new Date();
+    const topicMap = new Map<string, Topic>();
 
-    function processTopics(topics: Topic[], parentPath = '') {
-      for (const topic of topics) {
-        const topicPath = parentPath ? `${parentPath}.${topic.id}` : topic.id;
-
-        // Count target questions
-        const targetQuestions = topic.targets?.length || 0;
-
-        // Count answered questions (Q&A turns that match this topic)
-        const answeredTurns = allQaTurns.filter(
-          qa => qa.topicId === topic.id || qa.topicId === topicPath
-        );
-        const answeredQuestions = answeredTurns.length;
-
-        // Calculate confidence (simplified - based on answer length)
-        let confidence = 0;
-        if (answeredQuestions > 0) {
-          const avgAnswerLength = answeredTurns.reduce((sum, qa) => sum + qa.answer.length, 0) / answeredQuestions;
-          // Higher confidence for longer, more detailed answers
-          confidence = Math.min(100, (avgAnswerLength / 200) * 100) / 100;
+    const collectTopics = (topics: Topic[]) => {
+      topics.forEach((topic) => {
+        topicMap.set(topic.id, topic);
+        if (topic.children) {
+          collectTopics(topic.children);
         }
+      });
+    };
 
-        coverageResults.push({
-          companyId,
-          topicId: topic.id,
-          topicName: topic.name,
-          targetQuestions,
-          answeredQuestions: Math.min(answeredQuestions, targetQuestions),
-          confidence,
-        });
+    collectTopics(topicTree.topics);
 
-        // Recursively process children
-        if (topic.children && topic.children.length > 0) {
-          processTopics(topic.children, topicPath);
-        }
-      }
-    }
-
-    processTopics(topicTree.topics);
-
-    // Delete existing coverage scores for this company
     await db.delete(coverageScores).where(eq(coverageScores.companyId, companyId));
 
-    // Insert new coverage scores
-    const now = new Date();
-    for (const result of coverageResults) {
+    const coverageResults: any[] = [];
+
+    for (const [topicId, topic] of topicMap.entries()) {
+      const topicTargets = topic.targets ?? [];
+      const topicEvidence = evidenceRows.filter((row) => row.topicId === topicId);
+      const uniqueTargetIds = new Set(
+        topicEvidence
+          .map((row) => row.targetId)
+          .filter((value): value is string => Boolean(value))
+      );
+
+      const targetQuestions = topicTargets.length;
+      let answeredQuestions = uniqueTargetIds.size;
+
+      if (answeredQuestions === 0 && targetQuestions > 0) {
+        answeredQuestions = Math.min(topicEvidence.length, targetQuestions);
+      }
+
+      let coveragePercent = 0;
+      if (targetQuestions > 0) {
+        coveragePercent = Math.min(100, Math.round((answeredQuestions / targetQuestions) * 100));
+      } else if (topicEvidence.length > 0) {
+        coveragePercent = 100;
+      }
+
+      const confidence = topicEvidence.length > 0
+        ? topicEvidence.reduce((sum, row) => sum + (row.confidence ?? 0), 0) / topicEvidence.length
+        : 0;
+
+      const evidenceCount = topicEvidence.length;
+      const lastEvidenceAt = topicEvidence.reduce<Date | null>((latest, row) => {
+        if (!row.createdAt) {
+          return latest;
+        }
+        const created = new Date(row.createdAt);
+        if (!latest || created > latest) {
+          return created;
+        }
+        return latest;
+      }, null);
+
+      const remainingTargets = topicTargets.filter((target) => !uniqueTargetIds.has(target.id)).map((target) => target.q).slice(0, 5);
+
+      coverageResults.push({
+        companyId,
+        topicId,
+        targetQuestions,
+        answeredQuestions,
+        coveragePercent,
+        confidence,
+        evidenceCount,
+        lastEvidenceAt,
+        nextQuestions: remainingTargets,
+      });
+
       await db.insert(coverageScores).values({
-        companyId: result.companyId,
-        topicId: result.topicId,
-        targetQuestions: result.targetQuestions,
-        answeredQuestions: result.answeredQuestions,
-        confidence: result.confidence,
+        companyId,
+        topicId,
+        targetQuestions,
+        answeredQuestions,
+        coveragePercent,
+        confidence,
+        evidenceCount,
+        lastEvidenceAt,
         lastUpdated: now,
       });
     }
@@ -122,8 +141,8 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'Coverage calculated successfully',
       coverageResults,
-      sessionsProcessed: sessions.length,
-      totalQaTurns: allQaTurns.length,
+      sessionsProcessed: sessionIds.length,
+      totalEvidence: evidenceRows.length,
     });
   } catch (error) {
     console.error('Error calculating coverage:', error);

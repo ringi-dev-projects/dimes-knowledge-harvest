@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AzureOpenAI } from 'openai';
 import { db } from '@/lib/db';
-import { interviewSessions, qaTurns, knowledgeAtoms, topicTrees } from '@/lib/db/schema';
+import { interviewSessions, qaTurns, knowledgeAtoms, topicTrees, coverageEvidence } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { TopicTree } from '@/lib/types';
 
@@ -199,6 +199,21 @@ Return ONLY valid JSON in this format:
       storedAtoms.push(inserted);
     }
 
+    if (storedAtoms.length > 0) {
+      const evidenceValues = storedAtoms.map((atom) => ({
+        companyId: session.companyId,
+        topicId: atom.topicId,
+        targetId: null,
+        knowledgeAtomId: atom.id,
+        qaTurnId: null,
+        confidence: atom.confidence ?? 0,
+        evidenceType: 'knowledge_atom',
+        excerpt: atom.content?.slice(0, 500) ?? null,
+        createdAt: now,
+      }));
+      await db.insert(coverageEvidence).values(evidenceValues);
+    }
+
     // Also extract Q&A pairs and store them
     const qaExtractionPrompt = `Extract question-answer pairs from this interview transcript.
 For each Q&A pair, identify which topic it relates to.
@@ -231,15 +246,30 @@ Return ONLY valid JSON:
       try {
         const qaResult: { qaPairs: Array<{ topicId: string; question: string; answer: string; timestamp: number }> } = JSON.parse(qaContent);
 
-        for (const pair of qaResult.qaPairs) {
-          await db.insert(qaTurns).values({
+        const insertedQa = await db.insert(qaTurns).values(
+          qaResult.qaPairs.map((pair) => ({
             sessionId: session.id,
             topicId: pair.topicId,
             question: pair.question,
             answer: pair.answer,
             timestamp: new Date(pair.timestamp),
             speakerLabel: session.speakerName || null,
-          });
+          }))
+        ).returning();
+
+        if (insertedQa.length > 0) {
+          const qaEvidenceValues = insertedQa.map((qa) => ({
+            companyId: session.companyId,
+            topicId: qa.topicId ?? 'unknown',
+            targetId: null,
+            knowledgeAtomId: null,
+            qaTurnId: qa.id,
+            confidence: Math.min(1, Math.max(0, qa.answer.length / 400)),
+            evidenceType: 'qa_turn',
+            excerpt: qa.answer.slice(0, 500),
+            createdAt: now,
+          }));
+          await db.insert(coverageEvidence).values(qaEvidenceValues);
         }
       } catch (error) {
         console.error('Failed to extract Q&A pairs:', error);

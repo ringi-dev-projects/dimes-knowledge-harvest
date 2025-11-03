@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { coverageScores } from '@/lib/db/schema';
-import { CoverageMetrics } from '@/lib/types';
+import { coverageScores, coverageEvidence, topicTrees } from '@/lib/db/schema';
+import { CoverageMetrics, CoverageEvidenceSummary, TopicTree } from '@/lib/types';
 import { eq } from 'drizzle-orm';
 
 // Mock data for demo purposes
@@ -128,24 +128,87 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Fetch real coverage data from database
     let metrics: CoverageMetrics[] = [];
 
     if (companyId) {
-      const scores = await db
-        .select()
-        .from(coverageScores)
-        .where(eq(coverageScores.companyId, parseInt(companyId)));
+      const companyIdNumber = parseInt(companyId, 10);
+      if (Number.isNaN(companyIdNumber)) {
+        return NextResponse.json({ error: 'Invalid companyId' }, { status: 400 });
+      }
 
-      metrics = scores.map((score) => ({
-        topicId: score.topicId,
-        topicName: score.topicId, // TODO: Join with topics table to get name
-        targetQuestions: score.targetQuestions,
-        answeredQuestions: score.answeredQuestions,
-        coveragePercent: Math.round((score.answeredQuestions / score.targetQuestions) * 100),
-        confidence: Math.round(score.confidence * 100),
-        nextQuestions: [], // TODO: Calculate from unanswered targets
-      }));
+      const [topicTreeRow] = await db
+        .select()
+        .from(topicTrees)
+        .where(eq(topicTrees.companyId, companyIdNumber))
+        .limit(1);
+
+      const topicsMap = new Map<string, { name: string; targets: Array<{ id: string; q: string }> }>();
+
+      if (topicTreeRow) {
+        try {
+          const topicTree: TopicTree = JSON.parse(topicTreeRow.topicData);
+          const traverse = (nodes: TopicTree['topics']) => {
+            nodes.forEach((node) => {
+              topicsMap.set(node.id, {
+                name: node.name,
+                targets: node.targets ?? [],
+              });
+              if (node.children) {
+                traverse(node.children);
+              }
+            });
+          };
+          traverse(topicTree.topics);
+        } catch (error) {
+          console.warn('Failed to parse topic tree while building coverage metrics:', error);
+        }
+      }
+
+      const [scores, evidenceRows] = await Promise.all([
+        db.select().from(coverageScores).where(eq(coverageScores.companyId, companyIdNumber)),
+        db
+          .select()
+          .from(coverageEvidence)
+          .where(eq(coverageEvidence.companyId, companyIdNumber)),
+      ]);
+
+      metrics = scores.map((score) => {
+        const topicMeta = topicsMap.get(score.topicId);
+        const topicEvidence = evidenceRows
+          .filter((row) => row.topicId === score.topicId)
+          .sort((a, b) => {
+            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return bTime - aTime;
+          });
+
+        const evidenceSummary: CoverageEvidenceSummary[] = topicEvidence.slice(0, 5).map((row) => ({
+          id: row.id,
+          evidenceType: (row.evidenceType as CoverageEvidenceSummary['evidenceType']) ?? 'manual_note',
+          confidence: row.confidence ?? 0,
+          excerpt: row.excerpt ?? null,
+          targetId: row.targetId ?? undefined,
+          knowledgeAtomId: row.knowledgeAtomId ?? undefined,
+          qaTurnId: row.qaTurnId ?? undefined,
+          createdAt: row.createdAt?.toISOString?.() ?? new Date().toISOString(),
+        }));
+
+        const unansweredTargets = (topicMeta?.targets ?? [])
+          .filter((target) => !topicEvidence.some((row) => row.targetId === target.id))
+          .map((target) => target.q)
+          .slice(0, 5);
+
+        return {
+          topicId: score.topicId,
+          topicName: topicMeta?.name ?? score.topicId,
+          targetQuestions: score.targetQuestions,
+          answeredQuestions: score.answeredQuestions,
+          coveragePercent: score.coveragePercent,
+          confidence: Math.round((score.confidence ?? 0) * 100),
+          nextQuestions: unansweredTargets,
+          evidenceSummary,
+        } satisfies CoverageMetrics;
+      });
     }
 
     return NextResponse.json({
