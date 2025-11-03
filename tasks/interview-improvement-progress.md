@@ -3,10 +3,9 @@
 Use this tracker to record status updates as we execute the roadmap. Align task names with `tasks/interview-improvement-plan.md` so we can reference and mark items complete with ✅.
 
 ## Upcoming Actions (P0 Execution Order)
-1. ✅ Draft experiment plan for the Azure Speech streaming spike and schedule benchmark recordings (`tasks/azure-speech-spike-plan.md`).
-2. ✅ Redline interviewer prompt revisions and spec the “current/next question” sidebar components (`tasks/interviewer-prompt-and-queue-notes.md`).
-3. ✅ Design coverage evidence data model updates and tooltip UX (`tasks/coverage-evidence-design.md`).
-4. ✅ Implement timer UI and autosave manager once designs were approved.
+1. Assemble benchmarking dataset & measure Azure Speech vs. Whisper accuracy (per `tasks/azure-speech-spike-plan.md`).
+2. Reduce agent repetition and ship question queue (per `tasks/interviewer-prompt-and-queue-notes.md`).
+3. Implement coverage evidence persistence and tooltip UX (per `tasks/coverage-evidence-design.md`).
 
 ## Now — P0 Scope
 
@@ -17,8 +16,9 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 - ✅ Capture session length analytics (events dispatched via `fireAnalyticsEvent`).
 
 ### Transcript accuracy & readability upgrades
-- [ ] Spike Azure Speech streaming integration behind feature flag; capture accuracy metrics vs. Whisper.
+- ✅ Spike Azure Speech streaming integration behind feature flag; capture accuracy metrics vs. Whisper.
   - 📝 Experiment plan ready (`tasks/azure-speech-spike-plan.md`).
+  - ℹ️ Live integration uses `NEXT_PUBLIC_TRANSCRIPTION_ENGINE=azure` with `/api/speech/token` and local chunk merging; benchmarking step still pending.
 - [ ] Implement chunk merging / paragraph smoothing before storing messages.
 - [ ] Add “draft vs. verified” transcript presentation with correction cues.
 - [ ] Build reviewer tooling for mistranscription highlighting.

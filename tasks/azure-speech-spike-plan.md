@@ -50,3 +50,9 @@ This spike evaluates whether Azure Speech Services (neural STT) can replace or a
 - Do we need pronunciation lexicons/custom phrases for domain-specific terms (e.g., manufacturing vocabulary)?
 - Is diarization required from Azure, or can we continue speaker detection via existing WebRTC metadata?
 - What’s the cost delta vs. Whisper usage, and do we need budgeting safeguards?
+
+## Implementation Status (2025-11-04)
+- ✅ Feature flag pipeline live: set `NEXT_PUBLIC_TRANSCRIPTION_ENGINE=azure` to activate Azure Speech SDK recognition with chunk merging in `app/interview/page.tsx` and dynamic hook `useAzureSpeechRecognizer`.
+- ✅ `/api/speech/token` mints short-lived tokens so the browser never touches the speech key directly.
+- ✅ Local analytics emitters capture timer selection, reminders, and Azure resume events for telemetry.
+- ⏳ Benchmarking dataset & WER/latency analysis still outstanding; see upcoming actions in `tasks/interview-improvement-progress.md`.

@@ -201,6 +201,7 @@ type Dictionary = {
       persistFailed: string;
       realtimeCredentials: string;
       realtimeOfferRejected: string;
+      transcription: string;
     };
     transcript: {
       title: string;
@@ -584,6 +585,7 @@ const en: Dictionary = {
       persistFailed: 'Failed to save interview session',
       realtimeCredentials: 'Realtime session is missing connection credentials',
       realtimeOfferRejected: 'Azure Realtime service rejected the WebRTC offer. Check model deployment.',
+      transcription: 'Speech recognition error: {{message}}',
     },
     transcript: {
       title: 'Live transcript',
@@ -986,6 +988,7 @@ const ja: Dictionary = {
       persistFailed: 'インタビューの保存に失敗しました',
       realtimeCredentials: 'リアルタイムセッションの認証情報が不足しています。',
       realtimeOfferRejected: 'Azure RealtimeサービスがWebRTCオファーを拒否しました。モデル設定を確認してください。',
+      transcription: '音声認識で問題が発生しました: {{message}}',
     },
     transcript: {
       title: 'ライブ書き起こし',

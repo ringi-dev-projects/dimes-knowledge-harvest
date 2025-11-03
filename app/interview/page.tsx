@@ -6,6 +6,8 @@ import type { InterviewMessage } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
 import { useLocale } from '@/lib/context/LocaleContext';
 import type { Dictionary } from '@/lib/i18n/dictionaries';
+import type { SpeechRecognitionResult } from 'microsoft-cognitiveservices-speech-sdk';
+import { useAzureSpeechRecognizer } from './useAzureSpeechRecognizer';
 
 type SessionStatus = 'idle' | 'connecting' | 'active' | 'ended';
 
@@ -98,11 +100,13 @@ const TIMER_OPTIONS: TimerOption[] = [
 ];
 
 const UNLIMITED_REMINDER_OPTIONS = [0, 10, 15, 20, 30];
+const TRANSCRIPTION_ENGINE = process.env.NEXT_PUBLIC_TRANSCRIPTION_ENGINE ?? 'whisper';
 
 export default function InterviewPage() {
   const { companyId, companyName } = useCompany();
   const { dictionary, locale } = useLocale();
   const tInterview = dictionary.interview;
+  const isAzureTranscription = TRANSCRIPTION_ENGINE === 'azure';
 
   const transcriptionLanguage = locale === 'ja' ? 'ja' : 'en';
   const instructionsFallback = tInterview.ai.instructions;
@@ -142,6 +146,7 @@ export default function InterviewPage() {
   const userItemsRef = useRef<Map<string, { index: number }>>(new Map());
   const assistantItemsRef = useRef<Map<string, number>>(new Map());
   const userItemsByIdRef = useRef<Map<string, number>>(new Map());
+  const azureUtteranceRef = useRef<{ resultId: string; index: number } | null>(null);
   const sessionConfigRef = useRef<{ voice: string; instructions: string }>({
     voice: 'verse',
     instructions: instructionsFallback,
@@ -474,7 +479,11 @@ export default function InterviewPage() {
     clearReminderTimeout();
     setReminderMessage(null);
     pendingTimerConfigRef.current = null;
-  }, [clearReminderTimeout]);
+    if (isAzureTranscription) {
+      stopAzureRecognition();
+      azureUtteranceRef.current = null;
+    }
+  }, [clearReminderTimeout, isAzureTranscription, stopAzureRecognition]);
 
   const startTimer = useCallback((initialRemaining: number | null, initialElapsed: number, extensionCount = 0) => {
     if (timerIntervalRef.current) {
@@ -538,6 +547,82 @@ export default function InterviewPage() {
     },
     [tInterview.timer.instructions]
   );
+
+  const handleAzureRecognizing = useCallback(
+    (result: SpeechRecognitionResult) => {
+      if (!result) {
+        return;
+      }
+      const text = result.text?.trim();
+      if (!text) {
+        return;
+      }
+      const resultId = result.resultId;
+      let entry = azureUtteranceRef.current;
+      if (!entry || entry.resultId !== resultId) {
+        const index = appendMessage({
+          role: 'user',
+          content: text,
+          timestamp: Date.now(),
+        });
+        azureUtteranceRef.current = { resultId, index };
+      } else {
+        updateMessageAt(entry.index, (message) => ({
+          ...message,
+          content: text,
+          timestamp: Date.now(),
+        }));
+      }
+    },
+    [appendMessage, updateMessageAt]
+  );
+
+  const handleAzureRecognized = useCallback(
+    (result: SpeechRecognitionResult) => {
+      if (!result) {
+        return;
+      }
+      const text = result.text?.trim();
+      if (!text) {
+        azureUtteranceRef.current = null;
+        return;
+      }
+      const resultId = result.resultId;
+      const entry = azureUtteranceRef.current;
+      if (entry && entry.resultId === resultId) {
+        updateMessageAt(entry.index, (message) => ({
+          ...message,
+          content: text,
+          timestamp: Date.now(),
+        }));
+      } else {
+        appendMessage({
+          role: 'user',
+          content: text,
+          timestamp: Date.now(),
+        });
+      }
+      azureUtteranceRef.current = null;
+      runAutosave('message');
+    },
+    [appendMessage, runAutosave, updateMessageAt]
+  );
+
+  const handleAzureError = useCallback(
+    (error: Error) => {
+      console.error('Azure speech error:', error);
+      setError((prev) => prev || formatTemplate(tInterview.errors.transcription, { message: error.message }));
+    },
+    [tInterview.errors.transcription]
+  );
+
+  const { start: startAzureRecognition, stop: stopAzureRecognition } = useAzureSpeechRecognizer({
+    enabled: isAzureTranscription,
+    locale,
+    onRecognizing: handleAzureRecognizing,
+    onRecognized: handleAzureRecognized,
+    onError: handleAzureError,
+  });
 
   const runAutosave = useCallback(
     async (reason: 'interval' | 'message' | 'coverage') => {
@@ -709,31 +794,36 @@ export default function InterviewPage() {
     }
 
     const meta = sessionConfigRef.current;
+    const sessionConfig: any = {
+      modalities: ['text', 'audio'],
+      voice: meta?.voice ?? 'verse',
+      instructions: meta?.instructions ?? instructionsFallback,
+      turn_detection: {
+        type: 'server_vad',
+        threshold: 0.5,
+        prefix_padding_ms: 300,
+        silence_duration_ms: 200,
+        create_response: true,
+        interrupt_response: true,
+      },
+      tools: TOOL_DEFINITIONS,
+      tool_choice: 'auto',
+    };
+
+    if (!isAzureTranscription) {
+      sessionConfig.input_audio_transcription = {
+        model: TRANSCRIPTION_MODEL,
+        language: transcriptionLanguage,
+      };
+    }
+
     const payload = {
       type: 'session.update',
-      session: {
-        modalities: ['text', 'audio'],
-        voice: meta?.voice ?? 'verse',
-        instructions: meta?.instructions ?? instructionsFallback,
-        input_audio_transcription: {
-          model: TRANSCRIPTION_MODEL,
-          language: transcriptionLanguage,
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 200,
-          create_response: true,
-          interrupt_response: true,
-        },
-        tools: TOOL_DEFINITIONS,
-        tool_choice: 'auto',
-      },
+      session: sessionConfig,
     };
 
     channel.send(JSON.stringify(payload));
-  }, [instructionsFallback, transcriptionLanguage]);
+  }, [instructionsFallback, isAzureTranscription, transcriptionLanguage]);
 
   const handleFunctionCall = useCallback(
     (callId: string, buffer: { name?: string; args: string }) => {
@@ -887,6 +977,9 @@ export default function InterviewPage() {
             if (!transcript) return;
             const itemId: string | undefined = payload?.item_id;
             if (!itemId) return;
+            if (isAzureTranscription) {
+              return;
+            }
             markActiveSpeaker('user');
             let entry = userItemsRef.current.get(itemId);
             if (!entry) {
@@ -906,11 +999,14 @@ export default function InterviewPage() {
             return;
           }
           case 'conversation.item.input_audio_transcription.completed': {
-          const transcript: string = (payload?.transcript ?? '').trim();
-          if (!transcript) return;
-          const itemId: string | undefined = payload?.item_id;
-          if (!itemId) return;
-          markActiveSpeaker('user');
+            const transcript: string = (payload?.transcript ?? '').trim();
+            if (!transcript) return;
+            const itemId: string | undefined = payload?.item_id;
+            if (!itemId) return;
+            if (isAzureTranscription) {
+              return;
+            }
+            markActiveSpeaker('user');
             let entry = userItemsRef.current.get(itemId);
             if (!entry) {
               const index = appendMessage({
@@ -941,6 +1037,9 @@ export default function InterviewPage() {
                 ensureAssistantEntry(undefined, item.id, text);
                 if (text) markActiveSpeaker('assistant');
               } else if (item.role === 'user') {
+                if (isAzureTranscription) {
+                  return;
+                }
                 if (userItemsByIdRef.current.has(item.id)) {
                   return;
                 }
@@ -1068,8 +1167,8 @@ export default function InterviewPage() {
       } catch (err) {
         console.error('Failed to process realtime event:', err, event.data);
       }
-    },
-    [appendMessage, handleFunctionCall, markActiveSpeaker, runAutosave, tInterview, updateMessageAt]
+  },
+    [appendMessage, handleFunctionCall, isAzureTranscription, markActiveSpeaker, runAutosave, tInterview, updateMessageAt]
   );
 
   const cleanupConnection = useCallback(() => {
@@ -1121,7 +1220,11 @@ export default function InterviewPage() {
       }
       audioContextRef.current = null;
     }
-  }, [stopLevelMonitoring]);
+    if (isAzureTranscription) {
+      stopAzureRecognition();
+      azureUtteranceRef.current = null;
+    }
+  }, [isAzureTranscription, stopAzureRecognition, stopLevelMonitoring]);
 
   const finalizeRecording = useCallback((): Promise<Blob | null> => {
     const recorder = mediaRecorderRef.current;
@@ -1184,6 +1287,10 @@ export default function InterviewPage() {
       activeSpeakerTimeoutRef.current = null;
     }
     stopTimer();
+    if (isAzureTranscription) {
+      stopAzureRecognition();
+      azureUtteranceRef.current = null;
+    }
     setMessages([]);
     messagesRef.current = [];
     assistantResponsesRef.current.clear();
@@ -1212,7 +1319,7 @@ export default function InterviewPage() {
     setAutosaveStatus('idle');
     setAutosaveError(null);
     setPendingResume(false);
-  }, [stopLevelMonitoring, stopTimer]);
+  }, [isAzureTranscription, stopAzureRecognition, stopLevelMonitoring, stopTimer]);
 
   const prepareResumeSession = useCallback(() => {
     if (!resumeSnapshot) {
@@ -1469,9 +1576,17 @@ export default function InterviewPage() {
             secondsElapsed: timerConfig.elapsed,
             resume: Boolean(snapshot),
           });
+          if (isAzureTranscription) {
+            startAzureRecognition().catch((error) => {
+              console.error('Failed to start Azure speech recognizer:', error);
+            });
+          }
         }
         if (peerConnection.connectionState === 'failed') {
           setError(tInterview.connection.dropped);
+          if (isAzureTranscription) {
+            stopAzureRecognition();
+          }
         }
       };
 
@@ -1553,6 +1668,9 @@ export default function InterviewPage() {
     startTimer,
     stopTimer,
     tInterview,
+    isAzureTranscription,
+    startAzureRecognition,
+    stopAzureRecognition,
     buildTimerAwareInstructions,
     unlimitedReminderMinutes,
     timerOption,
