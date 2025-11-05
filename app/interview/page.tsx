@@ -502,6 +502,46 @@ export default function InterviewPage() {
     [clearReminderTimeout]
   );
 
+  const buildInitialQueue = useCallback((topics: TopicNode[]): QuestionQueueSnapshot => {
+    const items: QuestionQueueItem[] = [];
+    const walk = (nodes: TopicNode[]) => {
+      nodes.forEach((node) => {
+        if (node.targets && node.targets.length > 0) {
+          node.targets.forEach((target) => {
+            items.push({
+              topicId: node.id,
+              topicName: node.name,
+              targetId: target.id,
+              question: target.q,
+              required: target.required,
+              weight: node.weight ?? 1,
+              status: 'pending',
+            });
+          });
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      });
+    };
+    walk(topics);
+    items.sort((a, b) => {
+      if (a.required !== b.required) {
+        return a.required ? -1 : 1;
+      }
+      if ((b.weight ?? 0) !== (a.weight ?? 0)) {
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      }
+      return a.question.localeCompare(b.question);
+    });
+    const [first, ...rest] = items;
+    return {
+      current: first ?? null,
+      pending: rest,
+      completed: [],
+    };
+  }, []);
+
   const resetTimerForOption = useCallback(() => {
     if (selectedTimer.minutes !== null) {
       setTimerSecondsRemaining(selectedTimer.minutes * 60);
@@ -603,46 +643,6 @@ export default function InterviewPage() {
     },
     [tInterview.timer.instructions]
   );
-
-  const buildInitialQueue = useCallback((topics: TopicNode[]): QuestionQueueSnapshot => {
-    const items: QuestionQueueItem[] = [];
-    const walk = (nodes: TopicNode[]) => {
-      nodes.forEach((node) => {
-        if (node.targets && node.targets.length > 0) {
-          node.targets.forEach((target) => {
-            items.push({
-              topicId: node.id,
-              topicName: node.name,
-              targetId: target.id,
-              question: target.q,
-              required: target.required,
-              weight: node.weight ?? 1,
-              status: 'pending',
-            });
-          });
-        }
-        if (node.children && node.children.length > 0) {
-          walk(node.children);
-        }
-      });
-    };
-    walk(topics);
-    items.sort((a, b) => {
-      if (a.required !== b.required) {
-        return a.required ? -1 : 1;
-      }
-      if ((b.weight ?? 0) !== (a.weight ?? 0)) {
-        return (b.weight ?? 0) - (a.weight ?? 0);
-      }
-      return a.question.localeCompare(b.question);
-    });
-    const [first, ...rest] = items;
-    return {
-      current: first ?? null,
-      pending: rest,
-      completed: [],
-    };
-  }, []);
 
   const sendQueueUpdate = useCallback(() => {
     const channel = dataChannelRef.current;

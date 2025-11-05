@@ -1,17 +1,11 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { CompanyProvider } from "@/lib/context/CompanyContext";
 import { LocaleProvider } from "@/lib/context/LocaleContext";
 import { resolveLocale } from "@/lib/i18n/dictionaries";
 import { AppHeader } from "@/components/AppHeader";
 import { AppFooter } from "@/components/AppFooter";
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "Knowledge Harvest - Capture Tacit Knowledge",
@@ -29,7 +23,7 @@ export default async function RootLayout({
 
   return (
     <html lang={initialLocale}>
-      <body className={`${inter.className} antialiased`}>
+      <body className="antialiased font-sans">
         <LocaleProvider initialLocale={initialLocale}>
           <CompanyProvider>
             <AppHeader />

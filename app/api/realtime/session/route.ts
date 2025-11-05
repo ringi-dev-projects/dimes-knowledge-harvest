@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     const azureConfig = validateAzureRealtimeConfig();
     if (!azureConfig.valid) {
-      await markSessionFailed(session.id);
+      await markSessionFailed(sessionRecord.id);
       return NextResponse.json(
         {
           error: azureConfig.error ?? 'Azure Realtime API environment variables are not configured',
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     const azureSession = await mintAzureRealtimeSession(interviewInstructions);
 
     if (!azureSession.ok) {
-      await markSessionFailed(session.id);
+      await markSessionFailed(sessionRecord.id);
       return NextResponse.json(
         {
           error: azureSession.errorMessage ?? 'Failed to create Azure Realtime session',
@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
     const { payload } = azureSession;
     const clientSecret = payload?.client_secret?.value;
     if (!clientSecret) {
-      await markSessionFailed(session.id);
+      await markSessionFailed(sessionRecord.id);
       return NextResponse.json(
         { error: 'Azure Realtime session did not return a client secret' },
         { status: 500 }
