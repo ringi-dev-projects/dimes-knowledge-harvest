@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { companies, topicTrees, knowledgeAtoms } from '@/lib/db/schema';
+import { companies, topicTrees, knowledgeAtoms, interviewSessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { TopicTree, Topic } from '@/lib/types';
 
@@ -192,10 +192,13 @@ async function generateRealDocument(companyId: number) {
   const topicTree: TopicTree = JSON.parse(topicTreeRecords[0].topicData);
 
   // Get all knowledge atoms for this company's sessions
-  const atoms = await db
-    .select()
+  const atomRows = await db
+    .select({ atom: knowledgeAtoms })
     .from(knowledgeAtoms)
-    .where(eq(knowledgeAtoms.sessionId, companyId)); // This is simplified - should join through sessions
+    .innerJoin(interviewSessions, eq(knowledgeAtoms.sessionId, interviewSessions.id))
+    .where(eq(interviewSessions.companyId, companyId));
+
+  const atoms = atomRows.map((row) => row.atom);
 
   // Group atoms by topic
   const atomsByTopic = new Map<string, typeof atoms>();

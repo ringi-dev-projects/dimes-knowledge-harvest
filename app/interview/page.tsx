@@ -162,7 +162,8 @@ export default function InterviewPage() {
   const [coverageProgress, setCoverageProgress] = useState<CoverageEntry[]>([]);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [draftMessages, setDraftMessages] = useState<InterviewMessage[]>([]);
-  const [transcriptView, setTranscriptView] = useState<'final' | 'draft'>('final');
+  const [transcriptView, setTranscriptView] = useState<'final' | 'draft'>('draft');
+  const [speakerName, setSpeakerName] = useState('');
   const [reviewEntries, setReviewEntries] = useState<ReviewEntry[]>([]);
   const [timerOption, setTimerOption] = useState<TimerOptionId>('15');
   const [timerSecondsRemaining, setTimerSecondsRemaining] = useState<number | null>(15 * 60);
@@ -520,6 +521,27 @@ export default function InterviewPage() {
       setCoverageProgress([]);
     }
   }, [companyId, loadTopicContext]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedName = window.localStorage.getItem('interviewSpeakerName');
+    if (storedName) {
+      setSpeakerName(storedName);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (speakerName) {
+      window.localStorage.setItem('interviewSpeakerName', speakerName);
+    } else {
+      window.localStorage.removeItem('interviewSpeakerName');
+    }
+  }, [speakerName]);
 
   const evaluateReviewReasons = useCallback((content: string): string[] => {
     const reasons: string[] = [];
@@ -1232,8 +1254,8 @@ export default function InterviewPage() {
               next[existingIndex] = {
                 ...next[existingIndex],
                 topicName,
-                coverage: Math.max(0, Math.min(100, coverageValue)),
-                confidence: Math.max(0, Math.min(100, confidenceValue)),
+                coverage: Math.max(next[existingIndex].coverage, Math.max(0, Math.min(100, coverageValue))),
+                confidence: Math.max(next[existingIndex].confidence, Math.max(0, Math.min(100, confidenceValue))),
               };
               return next;
             }
@@ -1639,12 +1661,15 @@ export default function InterviewPage() {
     });
 
     if (!response.ok) {
+      if (response.status === 413) {
+        throw new Error(tInterview.errors.audioTooLarge);
+      }
       const payload = await safeParseJson(response);
       throw new Error(payload?.error || tInterview.errors.persistFailed);
     }
 
     return true;
-  }, [locale, tInterview.errors.persistFailed]);
+  }, [locale, tInterview.errors.audioTooLarge, tInterview.errors.persistFailed]);
 
   const resetInterviewState = useCallback(() => {
     if (activeSpeakerTimeoutRef.current) {
@@ -1923,6 +1948,7 @@ export default function InterviewPage() {
         },
         body: JSON.stringify({
           companyId,
+          speakerName: speakerName.trim() || undefined,
           locale,
           resumeSessionId: snapshot?.sessionId ?? undefined,
         }),
@@ -2089,6 +2115,7 @@ export default function InterviewPage() {
     startAzureRecognition,
     stopAzureRecognition,
     buildTimerAwareInstructions,
+    speakerName,
     unlimitedReminderMinutes,
     timerOption,
   ]);
@@ -2417,6 +2444,18 @@ export default function InterviewPage() {
           <span className="badge-soft">{tInterview.hero.badge}</span>
           <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">{tInterview.hero.title}</h1>
           <p className="text-sm leading-relaxed text-slate-600 sm:text-base">{heroDescription}</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {tInterview.form.speakerLabel}
+            </label>
+            <input
+              type="text"
+              value={speakerName}
+              onChange={(event) => setSpeakerName(event.target.value)}
+              placeholder={tInterview.form.speakerPlaceholder}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 sm:w-64"
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge label={statusLabel} status={status} />
             <TimerPill
@@ -2543,14 +2582,14 @@ export default function InterviewPage() {
             onReminderChange={handleUnlimitedReminderChange}
             showReminderPicker={timerOption === 'unlimited'}
             pendingResume={pendingResume}
-            reminderTexts={tInterview.timer.unlimitedReminder}
-          />
+          reminderTexts={tInterview.timer.unlimitedReminder}
+        />
 
-          <CurrentQuestionCard
-            question={currentQuestion}
-            pendingCount={pendingQuestions.length}
-            onMarkAnswered={handleMarkCurrentAnswered}
-            onSkip={handleSkipCurrent}
+        <CurrentQuestionCard
+          question={currentQuestion}
+          pendingCount={pendingQuestions.length}
+          onMarkAnswered={handleMarkCurrentAnswered}
+          onSkip={handleSkipCurrent}
             onFeedback={handleQuestionFeedback}
             feedback={currentQuestion ? questionFeedback[currentQuestion.targetId] ?? null : null}
             texts={tInterview.queue}
@@ -3027,48 +3066,46 @@ function TimerSelector({
   reminderTexts: Dictionary['interview']['timer']['unlimitedReminder'];
 }) {
   return (
-    <div className="mb-6 rounded-2xl border border-slate-200/70 bg-white/60 p-5 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {optionTexts.heading}
-          </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            {TIMER_OPTIONS.map((opt) => {
-              const text = optionTexts[opt.id];
-              const selected = option === opt.id;
-              return (
-                <label
-                  key={opt.id}
-                  className={`flex cursor-pointer flex-col rounded-xl border px-4 py-3 text-sm transition ${
-                    selected
-                      ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
-                      : disabled
-                      ? 'cursor-not-allowed border-slate-200 bg-white text-slate-400 opacity-70'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="session-length"
-                    value={opt.id}
-                    checked={selected}
-                    disabled={disabled}
-                    onChange={() => onChange(opt.id)}
-                    className="sr-only"
-                  />
-                  <span className="font-semibold">{text.label}</span>
-                  <span className="mt-1 text-xs text-slate-500">{text.description}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-        <div className="w-full max-w-xs rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-          <p>{optionTexts.guidance}</p>
-          {pendingResume ? <p className="mt-2 font-semibold text-slate-700">{optionTexts.pendingResume}</p> : null}
-        </div>
+    <div className="mb-6 rounded-xl border border-slate-200/60 bg-white/70 p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {optionTexts.heading}
+        </p>
+        {pendingResume ? (
+          <span className="text-xs font-medium text-slate-600">{optionTexts.pendingResume}</span>
+        ) : null}
       </div>
+      <div className="mt-3 flex flex-wrap items-stretch gap-2">
+        {TIMER_OPTIONS.map((opt) => {
+          const text = optionTexts[opt.id];
+          const selected = option === opt.id;
+          return (
+            <label
+              key={opt.id}
+              className={`flex cursor-pointer flex-col justify-center rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                selected
+                  ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
+                  : disabled
+                  ? 'cursor-not-allowed border-slate-200 bg-white text-slate-400 opacity-70'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200'
+              }`}
+            >
+              <input
+                type="radio"
+                name="session-length"
+                value={opt.id}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => onChange(opt.id)}
+                className="sr-only"
+              />
+              <span>{text.label}</span>
+              <span className="mt-1 text-[11px] font-normal text-slate-500">{text.description}</span>
+            </label>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[11px] text-slate-500">{optionTexts.guidance}</p>
       {showReminderPicker ? (
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-600">
           <span className="font-semibold text-slate-500">{reminderTexts.label}</span>
@@ -3262,6 +3299,9 @@ function QuestionQueueList({
           <h3 className="text-sm font-semibold text-slate-700">{texts.nextTitle}</h3>
           <span className="text-xs text-slate-400">{formatTemplate(texts.pendingCount, { count: String(pending.length) })}</span>
         </div>
+        <p className="mt-1 text-xs text-slate-500">
+          {texts.nextDescription}
+        </p>
         <ul className="mt-3 space-y-2 text-sm text-slate-600">
           {pending.length === 0 ? (
             <li>{texts.nextEmpty}</li>
@@ -3280,6 +3320,7 @@ function QuestionQueueList({
       </div>
       <div className="rounded-2xl border border-slate-200 bg-white/80 p-5">
         <h3 className="text-sm font-semibold text-slate-700">{texts.completedTitle}</h3>
+        <p className="mt-1 text-xs text-slate-500">{texts.completedDescription}</p>
         <ul className="mt-3 space-y-2 text-sm text-slate-500">
           {completed.length === 0 ? (
             <li>{texts.completedEmpty}</li>

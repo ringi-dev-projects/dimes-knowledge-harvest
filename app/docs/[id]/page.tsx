@@ -78,10 +78,10 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading documentation...</p>
+          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-indigo-600"></div>
+          <p className="mt-4 text-slate-600">Loading documentation...</p>
         </div>
       </div>
     );
@@ -89,9 +89,9 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
 
   if (!doc) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600">No documentation found</p>
+          <p className="text-slate-600">No documentation found</p>
           <a href="/dashboard" className="mt-4 text-indigo-600 hover:text-indigo-700">
             Return to Dashboard
           </a>
@@ -101,13 +101,13 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-slate-100">
       {/* Table of Contents Sidebar */}
-      <aside className="w-64 border-r border-gray-200 bg-white p-6 overflow-y-auto">
+      <aside className="w-64 overflow-y-auto border-r border-slate-200 bg-white p-6">
         <div className="mb-6">
-          <h2 className="text-lg font-bold text-gray-900">Knowledge Handbook</h2>
-          <p className="mt-1 text-sm text-gray-500">{doc.companyName}</p>
-          <p className="mt-1 text-xs text-gray-400">
+          <h2 className="text-lg font-bold text-slate-900">Knowledge Handbook</h2>
+          <p className="mt-1 text-sm text-slate-600">{doc.companyName}</p>
+          <p className="mt-1 text-xs text-slate-500">
             Generated {new Date(doc.generatedAt).toLocaleDateString()}
           </p>
         </div>
@@ -117,10 +117,10 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
             <div key={section.id}>
               <button
                 onClick={() => setActiveSection(section.id)}
-                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
+                className={`block w-full rounded-md px-3 py-2 text-left text-sm font-medium ${
                   activeSection === section.id
                     ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-gray-700 hover:bg-gray-50'
+                    : 'text-slate-700 hover:bg-slate-100'
                 }`}
               >
                 {section.title}
@@ -131,10 +131,10 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
                     <button
                       key={sub.id}
                       onClick={() => setActiveSection(sub.id)}
-                      className={`block w-full text-left px-3 py-1.5 rounded-md text-xs ${
+                      className={`block w-full rounded-md px-3 py-1.5 text-left text-xs ${
                         activeSection === sub.id
                           ? 'bg-indigo-50 text-indigo-700'
-                          : 'text-gray-600 hover:bg-gray-50'
+                          : 'text-slate-600 hover:bg-slate-100'
                       }`}
                     >
                       {sub.title}
@@ -150,14 +150,14 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
           <button
             onClick={() => exportDocument('html')}
             disabled={generating}
-            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:bg-gray-400"
+            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:bg-slate-400"
           >
             {generating ? 'Generating...' : 'Download HTML'}
           </button>
           <button
             onClick={() => exportDocument('docx')}
             disabled={generating}
-            className="w-full rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
+            className="w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:bg-slate-100"
           >
             {generating ? 'Generating...' : 'Download DOCX'}
           </button>
@@ -166,7 +166,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-8 py-12 space-y-12">
+        <div className="mx-auto max-w-4xl space-y-12 px-8 py-12">
           {doc.sections.map((section) => (
             <SectionContent
               key={section.id}
@@ -193,11 +193,11 @@ function SectionContent({ section, isActive }: { section: DocumentSection; isAct
     <div
       ref={ref}
       id={section.id}
-      className="rounded-3xl border border-slate-200 bg-white/95 p-8 shadow-sm backdrop-blur"
+      className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm"
     >
-      <h2 className="text-3xl font-bold text-slate-900 mb-6">{section.title}</h2>
+      <h2 className="mb-6 text-3xl font-bold text-slate-900">{section.title}</h2>
       <div
-        className="prose max-w-none prose-lg prose-headings:text-slate-900 prose-slate prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-code:bg-slate-100 prose-code:text-slate-900"
+        className="prose max-w-none prose-lg prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-code:bg-slate-100 prose-code:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700"
         dangerouslySetInnerHTML={{ __html: section.content }}
       />
 
@@ -207,7 +207,7 @@ function SectionContent({ section, isActive }: { section: DocumentSection; isAct
             <div key={sub.id} id={sub.id}>
               <h3 className="text-2xl font-semibold text-slate-900 mb-4">{sub.title}</h3>
               <div
-                className="prose max-w-none prose-base prose-slate prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900"
+                className="prose max-w-none prose-base prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700"
                 dangerouslySetInnerHTML={{ __html: sub.content }}
               />
             </div>

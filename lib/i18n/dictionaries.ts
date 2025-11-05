@@ -203,6 +203,7 @@ type Dictionary = {
       realtimeCredentials: string;
       realtimeOfferRejected: string;
       transcription: string;
+      audioTooLarge: string;
     };
     transcript: {
       title: string;
@@ -259,8 +260,10 @@ type Dictionary = {
       feedbackNegative: string;
       pendingCount: string;
       nextTitle: string;
+      nextDescription: string;
       nextEmpty: string;
       completedTitle: string;
+      completedDescription: string;
       completedEmpty: string;
     };
     speaker: {
@@ -268,6 +271,10 @@ type Dictionary = {
       assistant: string;
       user: string;
       speaking: string;
+    };
+    form: {
+      speakerLabel: string;
+      speakerPlaceholder: string;
     };
     timer: {
       elapsedLabel: string;
@@ -622,6 +629,7 @@ const en: Dictionary = {
       realtimeCredentials: 'Realtime session is missing connection credentials',
       realtimeOfferRejected: 'Azure Realtime service rejected the WebRTC offer. Check model deployment.',
       transcription: 'Speech recognition error: {{message}}',
+      audioTooLarge: 'Audio upload is too large for the current limit. Try shortening the session or compressing the recording.',
     },
     transcript: {
       title: 'Live transcript',
@@ -679,8 +687,10 @@ const en: Dictionary = {
       feedbackNegative: 'Needs work',
       pendingCount: '{{count}} remaining',
       nextTitle: 'Next up',
+      nextDescription: 'Preview of the AI queue so you can steer or reorder the conversation.',
       nextEmpty: 'No more upcoming prompts.',
       completedTitle: 'Completed this session',
+      completedDescription: 'Questions the AI marked as covered in this interview.',
       completedEmpty: 'Nothing captured yet.',
     },
     speaker: {
@@ -688,6 +698,10 @@ const en: Dictionary = {
       assistant: 'AI interviewer',
       user: 'You',
       speaking: 'Speaking',
+    },
+    form: {
+      speakerLabel: 'Expert name (optional)',
+      speakerPlaceholder: 'Add who you are interviewing…',
     },
     timer: {
       elapsedLabel: 'Elapsed time',
@@ -1060,6 +1074,7 @@ const ja: Dictionary = {
       realtimeCredentials: 'リアルタイムセッションの認証情報が不足しています。',
       realtimeOfferRejected: 'Azure RealtimeサービスがWebRTCオファーを拒否しました。モデル設定を確認してください。',
       transcription: '音声認識で問題が発生しました: {{message}}',
+      audioTooLarge: '音声ファイルが大きすぎます。収録時間を短くするか、圧縮して再試行してください。',
     },
     transcript: {
       title: 'ライブ書き起こし',
@@ -1116,8 +1131,10 @@ const ja: Dictionary = {
       feedbackNegative: '改善が必要',
       pendingCount: '残り{{count}}件',
       nextTitle: '次に予定している質問',
+      nextDescription: 'AIがこれから提案する質問のリストです。順番を調整したいときの参考にしてください。',
       nextEmpty: '次の質問はありません。',
       completedTitle: '今回カバーした質問',
+      completedDescription: 'このセッション中に完了とマークされた質問です。',
       completedEmpty: 'まだ記録された質問はありません。',
     },
     speaker: {
@@ -1125,6 +1142,10 @@ const ja: Dictionary = {
       assistant: 'AIインタビュアー',
       user: 'あなた',
       speaking: '話しています',
+    },
+    form: {
+      speakerLabel: '話し手の名前（任意）',
+      speakerPlaceholder: 'インタビューしている方の名前を入力...',
     },
     timer: {
       elapsedLabel: '経過時間',

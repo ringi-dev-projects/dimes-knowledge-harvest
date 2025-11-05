@@ -7,6 +7,14 @@ import { interviewAutosaves, interviewSessions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import type { InterviewMessage } from '@/lib/types';
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '64mb',
+    },
+  },
+};
+
 export async function POST(request: NextRequest) {
   try {
     const contentType = request.headers.get('content-type') || '';
