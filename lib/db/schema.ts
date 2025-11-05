@@ -82,6 +82,8 @@ export const interviewAutosaves = pgTable('interview_autosaves', {
   secondsElapsed: integer('seconds_elapsed').notNull().default(0),
   extensionCount: integer('extension_count').notNull().default(0),
   messagesJson: text('messages_json').notNull(),
+  draftsJson: text('drafts_json').notNull(),
+  reviewsJson: text('reviews_json').notNull(),
   coverageJson: text('coverage_json').notNull(),
   queueJson: text('queue_json').notNull(),
   feedbackJson: text('feedback_json').notNull(),

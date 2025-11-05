@@ -57,6 +57,8 @@ interface AutosaveSnapshot {
   extensionCount: number;
   coverage: CoverageEntry[];
   messages: InterviewMessage[];
+  drafts?: InterviewMessage[];
+  reviews?: ReviewEntry[];
   queue?: QuestionQueueSnapshot;
   feedback?: QuestionFeedbackMap;
   updatedAt: string;
@@ -80,10 +82,24 @@ interface QuestionQueueSnapshot {
 
 type QuestionFeedbackMap = Record<string, 'up' | 'down'>;
 
+interface ReviewEntry {
+  id: string;
+  messageId: string;
+  reasons: string[];
+  resolved: boolean;
+  createdAt: number;
+}
+
 const TRANSCRIPTION_MODEL = 'whisper-1';
 
 const SPEAKER_THRESHOLD = 0.05;
 const SPEAKER_DECAY_MS = 1200;
+const MERGE_THRESHOLD_MS = 2500;
+const MERGE_CHAR_LIMIT = 320;
+const REVIEW_LENGTH_THRESHOLD = 160;
+const PUNCTUATION_REGEX = /[.!?。？！]/;
+const REPEAT_CHAR_REGEX = /(.)\1{4,}/;
+const EXCESSIVE_PUNCT_REGEX = /[!?]{3,}/;
 
 const AUTOSAVE_INTERVAL_MS = 60_000;
 const AUTOSAVE_MIN_GAP_MS = 15_000;
@@ -145,6 +161,9 @@ export default function InterviewPage() {
   const [speakerLevels, setSpeakerLevels] = useState({ user: 0, assistant: 0 });
   const [coverageProgress, setCoverageProgress] = useState<CoverageEntry[]>([]);
   const [coverageLoading, setCoverageLoading] = useState(false);
+  const [draftMessages, setDraftMessages] = useState<InterviewMessage[]>([]);
+  const [transcriptView, setTranscriptView] = useState<'final' | 'draft'>('final');
+  const [reviewEntries, setReviewEntries] = useState<ReviewEntry[]>([]);
   const [timerOption, setTimerOption] = useState<TimerOptionId>('15');
   const [timerSecondsRemaining, setTimerSecondsRemaining] = useState<number | null>(15 * 60);
   const [timerSecondsElapsed, setTimerSecondsElapsed] = useState(0);
@@ -166,16 +185,18 @@ export default function InterviewPage() {
 
   const sessionIdRef = useRef<number | null>(null);
   const messagesRef = useRef<InterviewMessage[]>([]);
+  const draftMessagesRef = useRef<InterviewMessage[]>([]);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const assistantResponsesRef = useRef<Map<string, { index: number }>>(new Map());
-  const userItemsRef = useRef<Map<string, { index: number }>>(new Map());
-  const assistantItemsRef = useRef<Map<string, number>>(new Map());
-  const userItemsByIdRef = useRef<Map<string, number>>(new Map());
-  const azureUtteranceRef = useRef<{ resultId: string; index: number } | null>(null);
+  const assistantResponseDraftRef = useRef<Map<string, string>>(new Map());
+  const assistantItemDraftRef = useRef<Map<string, string>>(new Map());
+  const userItemDraftRef = useRef<Map<string, string>>(new Map());
+  const messageIndexRef = useRef<Map<string, number>>(new Map());
+  const azureDraftIdRef = useRef<string | null>(null);
+  const draftIndexRef = useRef<Map<string, number>>(new Map());
   const sessionConfigRef = useRef<{ voice: string; instructions: string }>({
     voice: 'verse',
     instructions: instructionsFallback,
@@ -204,6 +225,7 @@ export default function InterviewPage() {
   const queueStateRef = useRef<QuestionQueueSnapshot>(queueState);
   const questionFeedbackRef = useRef<QuestionFeedbackMap>(questionFeedback);
   const topicTreeRef = useRef<TopicNode[]>([]);
+  const reviewEntriesRef = useRef<ReviewEntry[]>([]);
 
   const [activeSpeaker, setActiveSpeaker] = useState<'assistant' | 'user' | null>(null);
   const [postSessionInfo, setPostSessionInfo] = useState<{ sessionId: number; companyId?: number | null } | null>(null);
@@ -211,6 +233,173 @@ export default function InterviewPage() {
     const match = TIMER_OPTIONS.find((option) => option.id === timerOption);
     return match ?? TIMER_OPTIONS[0];
   }, [timerOption]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedOption = window.localStorage.getItem('interviewTimerOption');
+    if (storedOption === '15' || storedOption === '30' || storedOption === 'unlimited') {
+      setTimerOption(storedOption);
+    }
+    if (storedOption === 'unlimited') {
+      const storedReminder = window.localStorage.getItem('interviewTimerUnlimitedReminder');
+      if (storedReminder) {
+        const parsed = parseInt(storedReminder, 10);
+        if (!Number.isNaN(parsed) && parsed > 0) {
+          setUnlimitedReminderMinutes(parsed);
+        }
+      }
+    }
+    const storedSessionId = window.localStorage.getItem('activeInterviewSessionId');
+    if (storedSessionId) {
+      const parsedSessionId = parseInt(storedSessionId, 10);
+      if (Number.isNaN(parsedSessionId)) {
+        window.localStorage.removeItem('activeInterviewSessionId');
+        return;
+      }
+      (async () => {
+        try {
+          const response = await fetch(`/api/interview/autosave?sessionId=${parsedSessionId}`);
+          if (!response.ok) {
+            if (response.status === 404) {
+              window.localStorage.removeItem('activeInterviewSessionId');
+            }
+            return;
+          }
+          const payload = await response.json();
+          if (payload?.snapshot) {
+            setResumeSnapshot(payload.snapshot as AutosaveSnapshot);
+          } else {
+            window.localStorage.removeItem('activeInterviewSessionId');
+          }
+        } catch (fetchError) {
+          console.warn('Failed to load autosave snapshot:', fetchError);
+        }
+      })();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('interviewTimerOption', timerOption);
+  }, [timerOption]);
+
+  useEffect(() => {
+    if (timerOption !== 'unlimited') {
+      return;
+    }
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('interviewTimerUnlimitedReminder', String(unlimitedReminderMinutes));
+  }, [timerOption, unlimitedReminderMinutes]);
+
+  const updateMessages = useCallback(
+    (updater: (prev: InterviewMessage[]) => InterviewMessage[]) => {
+      setMessages((prev) => {
+        const next = updater(prev);
+        messagesRef.current = next;
+        const indexMap = new Map<string, number>();
+        next.forEach((message, idx) => {
+          indexMap.set(message.id, idx);
+        });
+        messageIndexRef.current = indexMap;
+        return next;
+      });
+    },
+    []
+  );
+
+  const updateMessageById = useCallback(
+    (messageId: string, updater: (message: InterviewMessage) => InterviewMessage) => {
+      updateMessages((prev) => {
+        const index = prev.findIndex((message) => message.id === messageId);
+        if (index === -1) {
+          return prev;
+        }
+        const next = [...prev];
+        next[index] = updater(next[index]);
+        return next;
+      });
+    },
+    [updateMessages]
+  );
+
+  const markActiveSpeaker = useCallback((speaker: 'assistant' | 'user') => {
+    if (activeSpeakerTimeoutRef.current) {
+      clearTimeout(activeSpeakerTimeoutRef.current);
+    }
+    setActiveSpeaker(speaker);
+    activeSpeakerTimeoutRef.current = setTimeout(() => {
+      setActiveSpeaker(null);
+    }, 1500);
+    lastSpeakerRef.current = { role: speaker, timestamp: Date.now() };
+  }, []);
+
+  const clearReminderTimeout = useCallback(() => {
+    if (reminderTimeoutRef.current) {
+      clearTimeout(reminderTimeoutRef.current);
+      reminderTimeoutRef.current = null;
+    }
+  }, []);
+
+  const showReminder = useCallback(
+    (message: string, analytics?: { event: string; data?: Record<string, unknown> }) => {
+      clearReminderTimeout();
+      setReminderMessage(message);
+      reminderTimeoutRef.current = setTimeout(() => {
+        setReminderMessage(null);
+        reminderTimeoutRef.current = null;
+      }, 9000);
+      if (analytics) {
+        fireAnalyticsEvent(analytics.event, analytics.data ?? {});
+      }
+    },
+    [clearReminderTimeout]
+  );
+
+  const buildInitialQueue = useCallback((topics: TopicNode[]): QuestionQueueSnapshot => {
+    const items: QuestionQueueItem[] = [];
+    const walk = (nodes: TopicNode[]) => {
+      nodes.forEach((node) => {
+        if (node.targets && node.targets.length > 0) {
+          node.targets.forEach((target) => {
+            items.push({
+              topicId: node.id,
+              topicName: node.name,
+              targetId: target.id,
+              question: target.q,
+              required: target.required,
+              weight: node.weight ?? 1,
+              status: 'pending',
+            });
+          });
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      });
+    };
+    walk(topics);
+    items.sort((a, b) => {
+      if (a.required !== b.required) {
+        return a.required ? -1 : 1;
+      }
+      if ((b.weight ?? 0) !== (a.weight ?? 0)) {
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      }
+      return a.question.localeCompare(b.question);
+    });
+    const [first, ...rest] = items;
+    return {
+      current: first ?? null,
+      pending: rest,
+      completed: [],
+    };
+  }, []);
 
   const loadTopicContext = useCallback(async () => {
     if (!companyId) {
@@ -332,297 +521,211 @@ export default function InterviewPage() {
     }
   }, [companyId, loadTopicContext]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
+  const evaluateReviewReasons = useCallback((content: string): string[] => {
+    const reasons: string[] = [];
+    if (content.length >= REVIEW_LENGTH_THRESHOLD && !PUNCTUATION_REGEX.test(content)) {
+      reasons.push('long_no_punctuation');
     }
-    const storedOption = window.localStorage.getItem('interviewTimerOption');
-    if (storedOption === '15' || storedOption === '30' || storedOption === 'unlimited') {
-      setTimerOption(storedOption);
+    if (REPEAT_CHAR_REGEX.test(content)) {
+      reasons.push('repeated_characters');
     }
-    if (storedOption === 'unlimited') {
-      const storedReminder = window.localStorage.getItem('interviewTimerUnlimitedReminder');
-      if (storedReminder) {
-        const parsed = parseInt(storedReminder, 10);
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          setUnlimitedReminderMinutes(parsed);
-        }
-      }
+    if (EXCESSIVE_PUNCT_REGEX.test(content)) {
+      reasons.push('excessive_punctuation');
     }
-    const storedSessionId = window.localStorage.getItem('activeInterviewSessionId');
-    if (storedSessionId) {
-      const parsedSessionId = parseInt(storedSessionId, 10);
-      if (Number.isNaN(parsedSessionId)) {
-        window.localStorage.removeItem('activeInterviewSessionId');
-        return;
-      }
-      (async () => {
-        try {
-          const response = await fetch(`/api/interview/autosave?sessionId=${parsedSessionId}`);
-          if (!response.ok) {
-            if (response.status === 404) {
-              window.localStorage.removeItem('activeInterviewSessionId');
-            }
-            return;
-          }
-          const payload = await response.json();
-          if (payload?.snapshot) {
-            setResumeSnapshot(payload.snapshot as AutosaveSnapshot);
-          } else {
-            window.localStorage.removeItem('activeInterviewSessionId');
-          }
-        } catch (fetchError) {
-          console.warn('Failed to load autosave snapshot:', fetchError);
-        }
-      })();
-    }
+    return reasons;
   }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
+  const registerReviewEntry = useCallback((messageId: string, reasons: string[]) => {
+    if (reasons.length === 0) {
       return;
     }
-    window.localStorage.setItem('interviewTimerOption', timerOption);
-  }, [timerOption]);
-
-  useEffect(() => {
-    if (timerOption !== 'unlimited') {
-      return;
-    }
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('interviewTimerUnlimitedReminder', String(unlimitedReminderMinutes));
-  }, [timerOption, unlimitedReminderMinutes]);
-
-  useEffect(() => {
-    if (isRecording || pendingResume) {
-      return;
-    }
-    resetTimerForOption();
-  }, [isRecording, pendingResume, resetTimerForOption, timerOption]);
-
-  useEffect(() => {
-    if (!isRecording || !sessionIdRef.current) {
-      if (autosaveIntervalRef.current) {
-        clearInterval(autosaveIntervalRef.current);
-        autosaveIntervalRef.current = null;
-      }
-      return;
-    }
-    if (autosaveIntervalRef.current) {
-      clearInterval(autosaveIntervalRef.current);
-    }
-    autosaveIntervalRef.current = setInterval(() => {
-      runAutosave('interval');
-    }, AUTOSAVE_INTERVAL_MS);
-    return () => {
-      if (autosaveIntervalRef.current) {
-        clearInterval(autosaveIntervalRef.current);
-        autosaveIntervalRef.current = null;
-      }
-    };
-  }, [isRecording, runAutosave]);
-
-  useEffect(() => {
-    if (!isRecording || !sessionIdRef.current) {
-      return;
-    }
-    runAutosave('coverage');
-  }, [coverageProgress, isRecording, runAutosave]);
-
-  const updateMessages = useCallback(
-    (updater: (prev: InterviewMessage[]) => InterviewMessage[]) => {
-      setMessages((prev) => {
-        const next = updater(prev);
-        messagesRef.current = next;
-        return next;
+    setReviewEntries((prev) => {
+      const filtered = prev.filter((entry) => entry.messageId !== messageId);
+      const nextEntry: ReviewEntry = {
+        id: `${messageId}-review-${Date.now()}`,
+        messageId,
+        reasons,
+        resolved: false,
+        createdAt: Date.now(),
+      };
+      const next = [...filtered, nextEntry];
+      next.sort((a, b) => a.createdAt - b.createdAt);
+      reviewEntriesRef.current = next;
+      fireAnalyticsEvent('interview_transcript_review_flagged', {
+        sessionId: sessionIdRef.current ?? null,
+        messageId,
+        reasons,
       });
+      return next;
+    });
+  }, []);
+
+  const clearReviewEntry = useCallback((messageId: string, source: 'auto' | 'manual' = 'auto') => {
+    setReviewEntries((prev) => {
+      const next = prev.filter((entry) => entry.messageId !== messageId);
+      if (next.length !== prev.length) {
+        fireAnalyticsEvent('interview_transcript_review_cleared', {
+          sessionId: sessionIdRef.current ?? null,
+          messageId,
+          source,
+        });
+      }
+      reviewEntriesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const resolveReviewEntry = useCallback((entryId: string) => {
+    setReviewEntries((prev) => {
+      const target = prev.find((entry) => entry.id === entryId);
+      if (!target) {
+        return prev;
+      }
+      if (!target.resolved) {
+        fireAnalyticsEvent('interview_transcript_review_resolved', {
+          sessionId: sessionIdRef.current ?? null,
+          messageId: target.messageId,
+          reasons: target.reasons,
+        });
+      }
+      const next = prev.map((entry) =>
+        entry.id === entryId
+          ? {
+              ...entry,
+              resolved: true,
+            }
+          : entry
+      );
+      reviewEntriesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const createMessageId = useCallback((role: 'user' | 'assistant') => `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, []);
+
+  const shouldMergeMessages = useCallback(
+    (prev: InterviewMessage | undefined, role: 'user' | 'assistant', timestamp: number, content: string) => {
+      if (!prev) {
+        return false;
+      }
+      if (prev.role !== role) {
+        return false;
+      }
+      if (timestamp - prev.timestamp > MERGE_THRESHOLD_MS) {
+        return false;
+      }
+      if ((prev.content.length + content.length) > MERGE_CHAR_LIMIT) {
+        return false;
+      }
+      return true;
     },
     []
   );
 
-  const appendMessage = useCallback(
-    (message: InterviewMessage) => {
-      let index = -1;
-      updateMessages((prev) => {
-        const next = [...prev, message];
-        index = next.length - 1;
-        return next;
-      });
-      return index;
-    },
-    [updateMessages]
-  );
+  const addFinalMessage = useCallback(
+    ({ id, role, content, confidence }: { id?: string; role: 'user' | 'assistant'; content: string; confidence?: number }) => {
+      const timestamp = Date.now();
+      const messageId = id ?? createMessageId(role);
+      let reviewReasons: string[] = [];
 
-  const updateMessageAt = useCallback(
-    (index: number, updater: (message: InterviewMessage) => InterviewMessage) => {
-      updateMessages((prev) => {
-        if (!prev[index]) {
-          return prev;
-        }
+      setMessages((prev) => {
         const next = [...prev];
-        next[index] = updater(next[index]);
+        const last = next[next.length - 1];
+        if (shouldMergeMessages(last, role, timestamp, content)) {
+          const mergedContent = `${last.content.trim()} ${content.trim()}`.replace(/\s+/g, ' ');
+          last.content = mergedContent;
+          last.timestamp = timestamp;
+          if (confidence !== undefined) {
+            last.confidence = confidence;
+          }
+          reviewReasons = evaluateReviewReasons(mergedContent);
+          last.needsReview = reviewReasons.length > 0;
+          last.reviewReasons = reviewReasons;
+          return next;
+        }
+
+        reviewReasons = evaluateReviewReasons(content);
+        const message: InterviewMessage = {
+          id: messageId,
+          role,
+          content,
+          timestamp,
+          status: 'final',
+          confidence,
+          needsReview: reviewReasons.length > 0,
+          reviewReasons,
+        };
+        next.push(message);
         return next;
       });
-    },
-    [updateMessages]
-  );
 
-  const markActiveSpeaker = useCallback((speaker: 'assistant' | 'user') => {
-    if (activeSpeakerTimeoutRef.current) {
-      clearTimeout(activeSpeakerTimeoutRef.current);
-    }
-    setActiveSpeaker(speaker);
-    activeSpeakerTimeoutRef.current = setTimeout(() => {
-      setActiveSpeaker(null);
-    }, 1500);
-    lastSpeakerRef.current = { role: speaker, timestamp: Date.now() };
-  }, []);
-
-  const clearReminderTimeout = useCallback(() => {
-    if (reminderTimeoutRef.current) {
-      clearTimeout(reminderTimeoutRef.current);
-      reminderTimeoutRef.current = null;
-    }
-  }, []);
-
-  const showReminder = useCallback(
-    (message: string, analytics?: { event: string; data?: Record<string, unknown> }) => {
-      clearReminderTimeout();
-      setReminderMessage(message);
-      reminderTimeoutRef.current = setTimeout(() => {
-        setReminderMessage(null);
-        reminderTimeoutRef.current = null;
-      }, 9000);
-      if (analytics) {
-        fireAnalyticsEvent(analytics.event, analytics.data ?? {});
+      if (reviewReasons.length > 0) {
+        registerReviewEntry(messageId, reviewReasons);
+      } else {
+        clearReviewEntry(messageId, 'auto');
       }
     },
-    [clearReminderTimeout]
+    [clearReviewEntry, createMessageId, evaluateReviewReasons, registerReviewEntry, shouldMergeMessages]
   );
 
-  const buildInitialQueue = useCallback((topics: TopicNode[]): QuestionQueueSnapshot => {
-    const items: QuestionQueueItem[] = [];
-    const walk = (nodes: TopicNode[]) => {
-      nodes.forEach((node) => {
-        if (node.targets && node.targets.length > 0) {
-          node.targets.forEach((target) => {
-            items.push({
-              topicId: node.id,
-              topicName: node.name,
-              targetId: target.id,
-              question: target.q,
-              required: target.required,
-              weight: node.weight ?? 1,
-              status: 'pending',
-            });
-          });
-        }
-        if (node.children && node.children.length > 0) {
-          walk(node.children);
-        }
-      });
-    };
-    walk(topics);
-    items.sort((a, b) => {
-      if (a.required !== b.required) {
-        return a.required ? -1 : 1;
+  const upsertDraftMessage = useCallback((draftId: string, role: 'user' | 'assistant', content: string) => {
+    const timestamp = Date.now();
+    setDraftMessages((prev) => {
+      const map = draftIndexRef.current;
+      if (map.has(draftId)) {
+        const index = map.get(draftId)!;
+        const next = [...prev];
+        next[index] = {
+          ...next[index],
+          content,
+          timestamp,
+          role,
+          status: 'draft',
+          needsReview: false,
+          reviewReasons: [],
+        };
+        draftMessagesRef.current = next;
+        return next;
       }
-      if ((b.weight ?? 0) !== (a.weight ?? 0)) {
-        return (b.weight ?? 0) - (a.weight ?? 0);
-      }
-      return a.question.localeCompare(b.question);
-    });
-    const [first, ...rest] = items;
-    return {
-      current: first ?? null,
-      pending: rest,
-      completed: [],
-    };
-  }, []);
-
-  const resetTimerForOption = useCallback(() => {
-    if (selectedTimer.minutes !== null) {
-      setTimerSecondsRemaining(selectedTimer.minutes * 60);
-    } else {
-      setTimerSecondsRemaining(null);
-    }
-    setTimerSecondsElapsed(0);
-    setTimerExtensionCount(0);
-    setWrapUpModalOpen(false);
-    setWrapUpAutoDeadline(null);
-    wrapUpTriggeredRef.current = false;
-    lastReminderAtRef.current = null;
-    clearReminderTimeout();
-    setReminderMessage(null);
-  }, [clearReminderTimeout, selectedTimer.minutes]);
-
-  const stopTimer = useCallback(() => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-    }
-    if (wrapUpTimeoutRef.current) {
-      clearTimeout(wrapUpTimeoutRef.current);
-      wrapUpTimeoutRef.current = null;
-    }
-    wrapUpTriggeredRef.current = false;
-    setWrapUpModalOpen(false);
-    setWrapUpAutoDeadline(null);
-    activeSessionStartedAtRef.current = null;
-    lastReminderAtRef.current = null;
-    clearReminderTimeout();
-    setReminderMessage(null);
-    pendingTimerConfigRef.current = null;
-    if (isAzureTranscription) {
-      stopAzureRecognition();
-      azureUtteranceRef.current = null;
-    }
-  }, [clearReminderTimeout, isAzureTranscription, stopAzureRecognition]);
-
-  const startTimer = useCallback((initialRemaining: number | null, initialElapsed: number, extensionCount = 0) => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-    }
-    wrapUpTriggeredRef.current = false;
-    lastReminderAtRef.current = null;
-    activeSessionStartedAtRef.current = Date.now() - initialElapsed * 1000;
-    setTimerSecondsRemaining(initialRemaining);
-    setTimerSecondsElapsed(initialElapsed);
-    setTimerExtensionCount(extensionCount);
-    timerIntervalRef.current = setInterval(() => {
-      setTimerSecondsElapsed((prev) => prev + 1);
-      setTimerSecondsRemaining((prev) => {
-        if (prev === null) {
-          return null;
-        }
-        return prev > 0 ? prev - 1 : 0;
-      });
-    }, 1000);
-  }, []);
-
-  const extendTimer = useCallback(() => {
-    setTimerSecondsRemaining((prev) => {
-      if (prev === null) {
-        return null;
-      }
-      return prev > 0 ? prev + 300 : 300;
-    });
-    setTimerExtensionCount((prev) => {
-      const next = prev + 1;
-      fireAnalyticsEvent('interview_timer_extended', { count: next });
+      const message: InterviewMessage = {
+        id: draftId,
+        role,
+        content,
+        timestamp,
+        status: 'draft',
+        needsReview: false,
+        reviewReasons: [],
+      };
+      const next = [...prev, message];
+      map.set(draftId, next.length - 1);
+      draftMessagesRef.current = next;
       return next;
     });
-    wrapUpTriggeredRef.current = false;
-    setWrapUpModalOpen(false);
-    setWrapUpAutoDeadline(null);
-    if (wrapUpTimeoutRef.current) {
-      clearTimeout(wrapUpTimeoutRef.current);
-      wrapUpTimeoutRef.current = null;
-    }
-    clearReminderTimeout();
-  }, [clearReminderTimeout]);
+  }, []);
+
+  const finalizeDraftMessage = useCallback(
+    (draftId: string, role: 'user' | 'assistant', content: string, options?: { confidence?: number }) => {
+      setDraftMessages((prev) => {
+        const map = draftIndexRef.current;
+        if (!map.has(draftId)) {
+          draftMessagesRef.current = prev;
+          return prev;
+        }
+        const index = map.get(draftId)!;
+        const next = [...prev];
+        next.splice(index, 1);
+        map.delete(draftId);
+        next.forEach((_, idx) => {
+          map.set(next[idx].id, idx);
+        });
+        draftMessagesRef.current = next;
+        return next;
+      });
+
+      addFinalMessage({ id: draftId, role, content, confidence: options?.confidence });
+    },
+    [addFinalMessage]
+  );
 
   const buildTimerAwareInstructions = useCallback(
     (baseInstructions: string, option: TimerOption, reminderMinutes: number | null) => {
@@ -685,81 +788,27 @@ export default function InterviewPage() {
     questionFeedbackRef.current = questionFeedback;
   }, [questionFeedback]);
 
-  const handleAzureRecognizing = useCallback(
-    (result: SpeechRecognitionResult) => {
-      if (!result) {
-        return;
-      }
-      const text = result.text?.trim();
-      if (!text) {
-        return;
-      }
-      const resultId = result.resultId;
-      let entry = azureUtteranceRef.current;
-      if (!entry || entry.resultId !== resultId) {
-        const index = appendMessage({
-          role: 'user',
-          content: text,
-          timestamp: Date.now(),
-        });
-        azureUtteranceRef.current = { resultId, index };
-      } else {
-        updateMessageAt(entry.index, (message) => ({
-          ...message,
-          content: text,
-          timestamp: Date.now(),
-        }));
-      }
-    },
-    [appendMessage, updateMessageAt]
-  );
+  useEffect(() => {
+    reviewEntriesRef.current = reviewEntries;
+  }, [reviewEntries]);
 
-  const handleAzureRecognized = useCallback(
-    (result: SpeechRecognitionResult) => {
-      if (!result) {
-        return;
-      }
-      const text = result.text?.trim();
-      if (!text) {
-        azureUtteranceRef.current = null;
-        return;
-      }
-      const resultId = result.resultId;
-      const entry = azureUtteranceRef.current;
-      if (entry && entry.resultId === resultId) {
-        updateMessageAt(entry.index, (message) => ({
-          ...message,
-          content: text,
-          timestamp: Date.now(),
-        }));
-      } else {
-        appendMessage({
-          role: 'user',
-          content: text,
-          timestamp: Date.now(),
-        });
-      }
-      azureUtteranceRef.current = null;
-      runAutosave('message');
-    },
-    [appendMessage, runAutosave, updateMessageAt]
-  );
+  useEffect(() => {
+    messagesRef.current = messages;
+    const indexMap = new Map<string, number>();
+    messages.forEach((message, idx) => {
+      indexMap.set(message.id, idx);
+    });
+    messageIndexRef.current = indexMap;
+  }, [messages]);
 
-  const handleAzureError = useCallback(
-    (error: Error) => {
-      console.error('Azure speech error:', error);
-      setError((prev) => prev || formatTemplate(tInterview.errors.transcription, { message: error.message }));
-    },
-    [tInterview.errors.transcription]
-  );
-
-  const { start: startAzureRecognition, stop: stopAzureRecognition } = useAzureSpeechRecognizer({
-    enabled: isAzureTranscription,
-    locale,
-    onRecognizing: handleAzureRecognizing,
-    onRecognized: handleAzureRecognized,
-    onError: handleAzureError,
-  });
+  useEffect(() => {
+    draftMessagesRef.current = draftMessages;
+    const map = draftIndexRef.current;
+    map.clear();
+    draftMessages.forEach((message, idx) => {
+      map.set(message.id, idx);
+    });
+  }, [draftMessages]);
 
   const runAutosave = useCallback(
     async (reason: 'interval' | 'message' | 'coverage') => {
@@ -788,13 +837,15 @@ export default function InterviewPage() {
             secondsRemaining: timerSecondsRemaining,
             secondsElapsed: timerSecondsElapsed,
             extensionCount: timerExtensionCount,
-          coverage: coverageProgress,
-          messages: messagesRef.current,
-          queue: queueStateRef.current,
-          feedback: questionFeedbackRef.current,
-          updatedAt: new Date().toISOString(),
-        }),
-      });
+            coverage: coverageProgress,
+            messages: messagesRef.current,
+            drafts: draftMessagesRef.current,
+            reviews: reviewEntriesRef.current,
+            queue: queueStateRef.current,
+            feedback: questionFeedbackRef.current,
+            updatedAt: new Date().toISOString(),
+          }),
+        });
         if (!response.ok) {
           let message = 'Autosave failed';
           try {
@@ -828,6 +879,174 @@ export default function InterviewPage() {
       tInterview.timer.autosaveFallbackError,
     ]
   );
+
+  const handleAzureRecognizing = useCallback(
+    (result: SpeechRecognitionResult) => {
+      if (!result) {
+        return;
+      }
+      const text = result.text?.trim();
+      if (!text) {
+        return;
+      }
+      const draftId = result.resultId;
+      azureDraftIdRef.current = draftId;
+      upsertDraftMessage(draftId, 'user', text);
+    },
+    [upsertDraftMessage]
+  );
+
+  const handleAzureRecognized = useCallback(
+    (result: SpeechRecognitionResult) => {
+      if (!result) {
+        return;
+      }
+      const text = result.text?.trim();
+      const draftId = result.resultId;
+      if (!text) {
+        azureDraftIdRef.current = null;
+        return;
+      }
+      finalizeDraftMessage(draftId, 'user', text);
+      runAutosave('message');
+      azureDraftIdRef.current = null;
+    },
+    [finalizeDraftMessage, runAutosave]
+  );
+
+  const handleAzureError = useCallback(
+    (error: Error) => {
+      console.error('Azure speech error:', error);
+      setError((prev) => prev || formatTemplate(tInterview.errors.transcription, { message: error.message }));
+    },
+    [tInterview.errors.transcription]
+  );
+
+  const { start: startAzureRecognition, stop: stopAzureRecognition } = useAzureSpeechRecognizer({
+    enabled: isAzureTranscription,
+    locale,
+    onRecognizing: handleAzureRecognizing,
+    onRecognized: handleAzureRecognized,
+    onError: handleAzureError,
+  });
+
+  useEffect(() => {
+    if (!isRecording || !sessionIdRef.current) {
+      if (autosaveIntervalRef.current) {
+        clearInterval(autosaveIntervalRef.current);
+        autosaveIntervalRef.current = null;
+      }
+      return;
+    }
+    if (autosaveIntervalRef.current) {
+      clearInterval(autosaveIntervalRef.current);
+    }
+    autosaveIntervalRef.current = setInterval(() => {
+      runAutosave('interval');
+    }, AUTOSAVE_INTERVAL_MS);
+    return () => {
+      if (autosaveIntervalRef.current) {
+        clearInterval(autosaveIntervalRef.current);
+        autosaveIntervalRef.current = null;
+      }
+    };
+  }, [isRecording, runAutosave]);
+
+  useEffect(() => {
+    if (!isRecording || !sessionIdRef.current) {
+      return;
+    }
+    runAutosave('coverage');
+  }, [coverageProgress, isRecording, runAutosave]);
+
+  const resetTimerForOption = useCallback(() => {
+    if (selectedTimer.minutes !== null) {
+      setTimerSecondsRemaining(selectedTimer.minutes * 60);
+    } else {
+      setTimerSecondsRemaining(null);
+    }
+    setTimerSecondsElapsed(0);
+    setTimerExtensionCount(0);
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    wrapUpTriggeredRef.current = false;
+    lastReminderAtRef.current = null;
+    clearReminderTimeout();
+    setReminderMessage(null);
+  }, [clearReminderTimeout, selectedTimer.minutes]);
+
+  useEffect(() => {
+    if (isRecording || pendingResume) {
+      return;
+    }
+    resetTimerForOption();
+  }, [isRecording, pendingResume, resetTimerForOption, timerOption]);
+
+  const stopTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    if (wrapUpTimeoutRef.current) {
+      clearTimeout(wrapUpTimeoutRef.current);
+      wrapUpTimeoutRef.current = null;
+    }
+    wrapUpTriggeredRef.current = false;
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    activeSessionStartedAtRef.current = null;
+    lastReminderAtRef.current = null;
+    clearReminderTimeout();
+    setReminderMessage(null);
+    pendingTimerConfigRef.current = null;
+    if (isAzureTranscription) {
+      stopAzureRecognition();
+      azureDraftIdRef.current = null;
+    }
+  }, [clearReminderTimeout, isAzureTranscription, stopAzureRecognition]);
+
+  const startTimer = useCallback((initialRemaining: number | null, initialElapsed: number, extensionCount = 0) => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    wrapUpTriggeredRef.current = false;
+    lastReminderAtRef.current = null;
+    activeSessionStartedAtRef.current = Date.now() - initialElapsed * 1000;
+    setTimerSecondsRemaining(initialRemaining);
+    setTimerSecondsElapsed(initialElapsed);
+    setTimerExtensionCount(extensionCount);
+    timerIntervalRef.current = setInterval(() => {
+      setTimerSecondsElapsed((prev) => prev + 1);
+      setTimerSecondsRemaining((prev) => {
+        if (prev === null) {
+          return null;
+        }
+        return prev > 0 ? prev - 1 : 0;
+      });
+    }, 1000);
+  }, []);
+
+  const extendTimer = useCallback(() => {
+    setTimerSecondsRemaining((prev) => {
+      if (prev === null) {
+        return null;
+      }
+      return prev > 0 ? prev + 300 : 300;
+    });
+    setTimerExtensionCount((prev) => {
+      const next = prev + 1;
+      fireAnalyticsEvent('interview_timer_extended', { count: next });
+      return next;
+    });
+    wrapUpTriggeredRef.current = false;
+    setWrapUpModalOpen(false);
+    setWrapUpAutoDeadline(null);
+    if (wrapUpTimeoutRef.current) {
+      clearTimeout(wrapUpTimeoutRef.current);
+      wrapUpTimeoutRef.current = null;
+    }
+    clearReminderTimeout();
+  }, [clearReminderTimeout]);
 
   const ensureAudioContext = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -1064,55 +1283,63 @@ export default function InterviewPage() {
           return;
         }
 
-        const ensureAssistantEntry = (responseId?: string, itemId?: string, initialContent = '') => {
-          if (!responseId && !itemId) {
-            return;
+        const ensureAssistantDraftId = (responseId?: string, itemId?: string) => {
+          let draftId: string | undefined;
+          if (itemId) {
+            draftId = assistantItemDraftRef.current.get(itemId);
           }
-          if (itemId && assistantItemsRef.current.has(itemId)) {
-            return assistantItemsRef.current.get(itemId);
+          if (!draftId && responseId) {
+            draftId = assistantResponseDraftRef.current.get(responseId);
           }
-          if (responseId) {
-            const existing = assistantResponsesRef.current.get(responseId);
-            if (existing) {
-              if (itemId) {
-                assistantItemsRef.current.set(itemId, existing.index);
-              }
-              return existing.index;
-            }
-          }
-          const index = appendMessage({
-            role: 'assistant',
-            content: initialContent,
-            timestamp: Date.now(),
-          });
-          if (responseId) {
-            assistantResponsesRef.current.set(responseId, { index });
+          if (!draftId) {
+            draftId = itemId ?? responseId ?? createMessageId('assistant');
           }
           if (itemId) {
-            assistantItemsRef.current.set(itemId, index);
+            assistantItemDraftRef.current.set(itemId, draftId);
           }
-          return index;
+          if (responseId) {
+            assistantResponseDraftRef.current.set(responseId, draftId);
+          }
+          return draftId;
+        };
+
+        const ensureAssistantDraft = (responseId?: string, itemId?: string, initialContent?: string) => {
+          const draftId = ensureAssistantDraftId(responseId, itemId);
+          if (initialContent !== undefined) {
+            upsertDraftMessage(draftId, 'assistant', initialContent);
+          } else if (!draftIndexRef.current.has(draftId)) {
+            upsertDraftMessage(draftId, 'assistant', '');
+          }
+          return draftId;
         };
 
         const handleAssistantDelta = (delta: string, responseId?: string, itemId?: string) => {
-          if (!delta) return;
-          const index = ensureAssistantEntry(responseId, itemId);
-          if (index === undefined) return;
-          updateMessageAt(index, (message) => ({
-            ...message,
-            content: (message.content || '') + delta,
-            timestamp: Date.now(),
-          }));
+          if (!delta) {
+            return;
+          }
+          const draftId = ensureAssistantDraft(responseId, itemId);
+          const index = draftIndexRef.current.get(draftId);
+          const currentContent =
+            typeof index === 'number' ? draftMessagesRef.current[index]?.content ?? '' : '';
+          upsertDraftMessage(draftId, 'assistant', `${currentContent}${delta}`);
         };
 
         const handleAssistantFinal = (text: string, responseId?: string, itemId?: string) => {
-          const index = ensureAssistantEntry(responseId, itemId);
-          if (index === undefined) return;
-          updateMessageAt(index, (message) => ({
-            ...message,
-            content: text ?? message.content,
-            timestamp: Date.now(),
-          }));
+          const draftId = ensureAssistantDraftId(responseId, itemId);
+          const index = draftIndexRef.current.get(draftId);
+          const fallback =
+            typeof index === 'number' ? draftMessagesRef.current[index]?.content ?? '' : '';
+          const candidate = (text ?? '').length > 0 ? text ?? '' : fallback;
+          if (!candidate.trim()) {
+            return;
+          }
+          finalizeDraftMessage(draftId, 'assistant', candidate);
+          if (itemId) {
+            assistantItemDraftRef.current.delete(itemId);
+          }
+          if (responseId) {
+            assistantResponseDraftRef.current.delete(responseId);
+          }
           runAutosave('message');
         };
 
@@ -1136,52 +1363,24 @@ export default function InterviewPage() {
             const transcript: string = (payload?.delta ?? '').trim();
             if (!transcript) return;
             const itemId: string | undefined = payload?.item_id;
-            if (!itemId) return;
-            if (isAzureTranscription) {
+            if (!itemId || isAzureTranscription) {
               return;
             }
             markActiveSpeaker('user');
-            let entry = userItemsRef.current.get(itemId);
-            if (!entry) {
-              const index = appendMessage({
-                role: 'user',
-                content: transcript,
-                timestamp: Date.now(),
-              });
-              userItemsRef.current.set(itemId, { index });
-            } else {
-              updateMessageAt(entry.index, (message) => ({
-                ...message,
-                content: transcript,
-                timestamp: Date.now(),
-              }));
-            }
+            userItemDraftRef.current.set(itemId, itemId);
+            upsertDraftMessage(itemId, 'user', transcript);
             return;
           }
           case 'conversation.item.input_audio_transcription.completed': {
             const transcript: string = (payload?.transcript ?? '').trim();
             if (!transcript) return;
             const itemId: string | undefined = payload?.item_id;
-            if (!itemId) return;
-            if (isAzureTranscription) {
+            if (!itemId || isAzureTranscription) {
               return;
             }
             markActiveSpeaker('user');
-            let entry = userItemsRef.current.get(itemId);
-            if (!entry) {
-              const index = appendMessage({
-                role: 'user',
-                content: transcript,
-                timestamp: Date.now(),
-              });
-              userItemsRef.current.set(itemId, { index });
-            } else {
-              updateMessageAt(entry.index, (message) => ({
-                ...message,
-                content: transcript,
-                timestamp: Date.now(),
-              }));
-            }
+            userItemDraftRef.current.delete(itemId);
+            finalizeDraftMessage(itemId, 'user', transcript);
             runAutosave('message');
             return;
           }
@@ -1194,29 +1393,27 @@ export default function InterviewPage() {
                   .filter((part: any) => part?.type === 'text' && part?.text)
                   .map((part: any) => part.text)
                   .join('');
-                ensureAssistantEntry(undefined, item.id, text);
-                if (text) markActiveSpeaker('assistant');
+                ensureAssistantDraft(undefined, item.id, text ? text : undefined);
+                if (text) {
+                  markActiveSpeaker('assistant');
+                }
               } else if (item.role === 'user') {
                 if (isAzureTranscription) {
-                  return;
-                }
-                if (userItemsByIdRef.current.has(item.id)) {
                   return;
                 }
                 const text = (item.content || [])
                   .filter((part: any) => part?.type === 'text' && part?.text)
                   .map((part: any) => part.text)
                   .join('');
-                if (text) {
-                  markActiveSpeaker('user');
-                  const index = appendMessage({
-                    role: 'user',
-                    content: text,
-                    timestamp: Date.now(),
-                  });
-                  userItemsByIdRef.current.set(item.id, index);
-                  runAutosave('message');
+                if (!text) {
+                  return;
                 }
+                if (messageIndexRef.current.has(item.id)) {
+                  return;
+                }
+                markActiveSpeaker('user');
+                finalizeDraftMessage(item.id, 'user', text);
+                runAutosave('message');
               }
             } else if (item.type === 'function_call') {
               const callId = item.call_id;
@@ -1236,8 +1433,10 @@ export default function InterviewPage() {
                 .filter((part: any) => part?.type === 'text' && part?.text)
                 .map((part: any) => part.text)
                 .join('');
-              ensureAssistantEntry(responseId, item.id, text);
-              if (text) markActiveSpeaker('assistant');
+              ensureAssistantDraft(responseId, item.id, text ? text : undefined);
+              if (text) {
+                markActiveSpeaker('assistant');
+              }
             } else if (item.type === 'function_call') {
               const callId = item.call_id;
               if (!callId) return;
@@ -1312,13 +1511,14 @@ export default function InterviewPage() {
           case 'response.done': {
             const responseId: string | undefined = payload?.response?.id ?? payload?.response_id;
             if (!responseId) return;
-            const entry = assistantResponsesRef.current.get(responseId);
-            if (entry) {
-              updateMessageAt(entry.index, (message) => ({
+            const draftId = assistantResponseDraftRef.current.get(responseId);
+            if (draftId && messageIndexRef.current.has(draftId)) {
+              updateMessageById(draftId, (message) => ({
                 ...message,
                 timestamp: Date.now(),
               }));
             }
+            assistantResponseDraftRef.current.delete(responseId);
             return;
           }
           default:
@@ -1328,7 +1528,7 @@ export default function InterviewPage() {
         console.error('Failed to process realtime event:', err, event.data);
       }
   },
-    [appendMessage, handleFunctionCall, isAzureTranscription, markActiveSpeaker, runAutosave, tInterview, updateMessageAt]
+    [createMessageId, finalizeDraftMessage, handleFunctionCall, isAzureTranscription, markActiveSpeaker, runAutosave, tInterview, upsertDraftMessage, updateMessageById]
   );
 
   const cleanupConnection = useCallback(() => {
@@ -1382,8 +1582,13 @@ export default function InterviewPage() {
     }
     if (isAzureTranscription) {
       stopAzureRecognition();
-      azureUtteranceRef.current = null;
+      azureDraftIdRef.current = null;
     }
+    assistantResponseDraftRef.current.clear();
+    assistantItemDraftRef.current.clear();
+    userItemDraftRef.current.clear();
+    draftMessagesRef.current = [];
+    draftIndexRef.current.clear();
   }, [isAzureTranscription, stopAzureRecognition, stopLevelMonitoring]);
 
   const finalizeRecording = useCallback((): Promise<Blob | null> => {
@@ -1449,14 +1654,20 @@ export default function InterviewPage() {
     stopTimer();
     if (isAzureTranscription) {
       stopAzureRecognition();
-      azureUtteranceRef.current = null;
+      azureDraftIdRef.current = null;
     }
     setMessages([]);
     messagesRef.current = [];
-    assistantResponsesRef.current.clear();
-    userItemsRef.current.clear();
-    assistantItemsRef.current.clear();
-    userItemsByIdRef.current.clear();
+    messageIndexRef.current.clear();
+    setDraftMessages([]);
+    draftMessagesRef.current = [];
+    draftIndexRef.current.clear();
+    setReviewEntries([]);
+    reviewEntriesRef.current = [];
+    assistantResponseDraftRef.current.clear();
+    assistantItemDraftRef.current.clear();
+    userItemDraftRef.current.clear();
+    azureDraftIdRef.current = null;
     functionCallBuffersRef.current.clear();
     setSessionId(null);
     sessionIdRef.current = null;
@@ -1509,6 +1720,21 @@ export default function InterviewPage() {
     setTimerExtensionCount(resumeSnapshot.extensionCount);
     setMessages(resumeSnapshot.messages);
     messagesRef.current = resumeSnapshot.messages;
+    const messageIndex = new Map<string, number>();
+    resumeSnapshot.messages.forEach((message, idx) => {
+      messageIndex.set(message.id, idx);
+    });
+    messageIndexRef.current = messageIndex;
+    const drafts = Array.isArray(resumeSnapshot.drafts) ? resumeSnapshot.drafts : [];
+    setDraftMessages(drafts);
+    draftMessagesRef.current = drafts;
+    draftIndexRef.current.clear();
+    drafts.forEach((message, idx) => {
+      draftIndexRef.current.set(message.id, idx);
+    });
+    const reviews = Array.isArray(resumeSnapshot.reviews) ? resumeSnapshot.reviews : [];
+    setReviewEntries(reviews);
+    reviewEntriesRef.current = reviews;
     setCoverageProgress(
       resumeSnapshot.coverage.map((entry) => ({
         ...entry,
@@ -1631,11 +1857,17 @@ export default function InterviewPage() {
     if (!snapshot) {
       setMessages([]);
       messagesRef.current = [];
+      messageIndexRef.current.clear();
+      setDraftMessages([]);
+      draftMessagesRef.current = [];
+      draftIndexRef.current.clear();
+      setReviewEntries([]);
+      reviewEntriesRef.current = [];
     }
-    assistantResponsesRef.current.clear();
-    userItemsRef.current.clear();
-    assistantItemsRef.current.clear();
-    userItemsByIdRef.current.clear();
+    assistantResponseDraftRef.current.clear();
+    assistantItemDraftRef.current.clear();
+    userItemDraftRef.current.clear();
+    azureDraftIdRef.current = null;
     functionCallBuffersRef.current.clear();
 
     try {
@@ -2041,7 +2273,7 @@ export default function InterviewPage() {
     if (container) {
       container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [draftMessages, messages]);
 
   useEffect(() => {
     return () => {
@@ -2084,6 +2316,21 @@ export default function InterviewPage() {
   const currentQuestion = queueState.current;
   const pendingQuestions = queueState.pending;
   const completedQuestions = queueState.completed;
+  const reviewStatusByMessageId = useMemo(() => {
+    const map = new Map<string, 'pending' | 'resolved'>();
+    reviewEntries.forEach((entry) => {
+      map.set(entry.messageId, entry.resolved ? 'resolved' : 'pending');
+    });
+    return map;
+  }, [reviewEntries]);
+  const transcriptMessages = useMemo(() => {
+    if (transcriptView === 'final') {
+      return messages;
+    }
+    return [...messages, ...draftMessages];
+  }, [draftMessages, messages, transcriptView]);
+  const draftCount = draftMessages.length;
+  const hasDrafts = draftCount > 0;
 
   const handleMarkCurrentAnswered = useCallback(() => {
     setQueueState((prev) => {
@@ -2324,7 +2571,30 @@ export default function InterviewPage() {
           )}
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">{tInterview.transcript.title}</h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-slate-700">{tInterview.transcript.title}</h2>
+              <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 p-1 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setTranscriptView('final')}
+                  className={`rounded-full px-3 py-1 transition ${transcriptView === 'final' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {tInterview.transcript.viewFinal}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTranscriptView('draft')}
+                  className={`rounded-full px-3 py-1 transition ${transcriptView === 'draft' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {hasDrafts ? `${tInterview.transcript.viewDraft} (${draftCount})` : tInterview.transcript.viewDraft}
+                </button>
+              </div>
+            </div>
+            {transcriptView === 'final' && hasDrafts ? (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {formatTemplate(tInterview.transcript.draftNotice, { count: String(draftCount) })}
+              </div>
+            ) : null}
             {reminderMessage ? (
               <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-medium text-indigo-700">
                 {reminderMessage}
@@ -2335,7 +2605,7 @@ export default function InterviewPage() {
               className="space-y-4 overflow-y-auto pr-1"
               style={{ maxHeight: '24rem' }}
             >
-              {messages.length === 0 ? (
+              {transcriptMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-10 text-center text-slate-500">
                   <svg className="h-12 w-12 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                     <path
@@ -2347,25 +2617,158 @@ export default function InterviewPage() {
                   <p className="text-sm">{tInterview.transcript.empty}</p>
                 </div>
               ) : (
-                messages.map((msg, idx) => (
-                  <div
-                    key={`${msg.role}-${idx}-${msg.timestamp}`}
-                    className={`flex ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}
-                  >
+                transcriptMessages.map((msg) => {
+                  const key = `${msg.id}-${msg.timestamp}-${msg.status ?? 'final'}`;
+                  const isAssistant = msg.role === 'assistant';
+                  const isDraft = msg.status === 'draft';
+                  const reviewStatus = reviewStatusByMessageId.get(msg.id);
+                  const pendingReview = reviewStatus === 'pending';
+                  const resolvedReview = reviewStatus === 'resolved';
+                  const reasonLabels =
+                    msg.reviewReasons && msg.reviewReasons.length > 0
+                      ? msg.reviewReasons.map(
+                          (reason) =>
+                            tInterview.transcript.reviewReasons[
+                              reason as keyof typeof tInterview.transcript.reviewReasons
+                            ] ?? reason
+                        )
+                      : [];
+                  const bubbleClass = isDraft
+                    ? 'bg-white text-slate-800 ring-1 ring-slate-200 border border-dashed border-slate-300'
+                    : isAssistant
+                    ? 'bg-white text-slate-900 ring-1 ring-slate-200/70'
+                    : 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-indigo-200/50';
+                  const reasonTextClass = isAssistant || isDraft ? 'text-slate-500' : 'text-white/80';
+                  return (
                     <div
-                      className={`max-w-lg rounded-2xl px-4 py-3 shadow-sm ${
-                        msg.role === 'assistant'
-                          ? 'bg-white text-slate-900'
-                          : 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
-                      }`}
+                      key={key}
+                      className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
                     >
-                      <p className="text-xs font-semibold uppercase tracking-wide">
-                        {msg.role === 'assistant' ? tInterview.transcript.assistantLabel : tInterview.transcript.userLabel}
-                      </p>
-                      <p className="mt-1 text-sm leading-relaxed">{msg.content}</p>
+                      <div className={`max-w-lg rounded-2xl px-4 py-3 shadow-sm ${bubbleClass}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <p
+                            className={`text-xs font-semibold uppercase tracking-wide ${
+                              isDraft ? 'text-slate-500' : isAssistant ? 'text-slate-500' : 'text-white/90'
+                            }`}
+                          >
+                            {isAssistant ? tInterview.transcript.assistantLabel : tInterview.transcript.userLabel}
+                          </p>
+                          <div className="flex items-center gap-1">
+                            {isDraft ? (
+                              <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                                {tInterview.transcript.draftBadge}
+                              </span>
+                            ) : null}
+                            {pendingReview ? (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                                {tInterview.transcript.reviewBadge}
+                              </span>
+                            ) : null}
+                            {resolvedReview ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                ✅ {tInterview.transcript.resolvedBadge}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <p
+                          className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed ${
+                            isDraft ? 'text-slate-700' : ''
+                          }`}
+                        >
+                          {msg.content}
+                        </p>
+                        {pendingReview && reasonLabels.length > 0 ? (
+                          <ul className={`mt-2 space-y-1 text-xs ${reasonTextClass}`}>
+                            {reasonLabels.map((label) => (
+                              <li key={label}>• {label}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
+              )}
+            </div>
+            <div className="mt-5 rounded-2xl border border-slate-200/60 bg-white/90 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {tInterview.transcript.reviewTitle}
+                </h3>
+                {reviewEntries.length > 0 ? (
+                  <span className="text-[11px] font-medium text-slate-400">
+                    {formatTemplate(tInterview.transcript.reviewCount, { count: String(reviewEntries.length) })}
+                  </span>
+                ) : null}
+              </div>
+              {reviewEntries.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-500">{tInterview.transcript.reviewEmpty}</p>
+              ) : (
+                <ul className="mt-3 space-y-3 text-sm">
+                  {reviewEntries.map((entry) => {
+                    const message =
+                      messages.find((item) => item.id === entry.messageId) ||
+                      draftMessages.find((item) => item.id === entry.messageId);
+                    const isResolved = entry.resolved;
+                    const badgeClass = isResolved
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-amber-100 text-amber-700';
+                    const containerClass = isResolved
+                      ? 'border border-emerald-200 bg-emerald-50/60'
+                      : 'border border-amber-200 bg-amber-50/60';
+                    return (
+                      <li key={entry.id} className={`rounded-xl px-3 py-3 text-slate-700 ${containerClass}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {message
+                                ? message.role === 'assistant'
+                                  ? tInterview.transcript.assistantLabel
+                                  : tInterview.transcript.userLabel
+                                : tInterview.transcript.unknownSpeaker}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {message?.content ?? tInterview.transcript.messageMissing}
+                            </p>
+                            <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                              {entry.reasons.map((reason) => (
+                                <li key={reason}>
+                                  •{' '}
+                                  {tInterview.transcript.reviewReasons[
+                                    reason as keyof typeof tInterview.transcript.reviewReasons
+                                  ] ?? reason}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badgeClass}`}>
+                              {isResolved ? tInterview.transcript.resolvedBadge : tInterview.transcript.reviewBadge}
+                            </span>
+                            {!isResolved ? (
+                              <button
+                                type="button"
+                                onClick={() => resolveReviewEntry(entry.id)}
+                                className="text-xs font-semibold text-emerald-700 transition hover:text-emerald-800"
+                              >
+                                {tInterview.transcript.markResolved}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => clearReviewEntry(entry.messageId, 'manual')}
+                                className="text-xs font-semibold text-slate-400 transition hover:text-slate-600"
+                              >
+                                {tInterview.transcript.dismissResolved}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
           </div>

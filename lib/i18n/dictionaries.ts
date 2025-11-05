@@ -209,6 +209,24 @@ type Dictionary = {
       assistantLabel: string;
       userLabel: string;
       empty: string;
+      viewFinal: string;
+      viewDraft: string;
+      draftNotice: string;
+      draftBadge: string;
+      reviewBadge: string;
+      resolvedBadge: string;
+      reviewTitle: string;
+      reviewCount: string;
+      reviewEmpty: string;
+      markResolved: string;
+      dismissResolved: string;
+      unknownSpeaker: string;
+      messageMissing: string;
+      reviewReasons: {
+        long_no_punctuation: string;
+        repeated_characters: string;
+        excessive_punctuation: string;
+      };
     };
     postSession: {
       title: string;
@@ -610,6 +628,24 @@ const en: Dictionary = {
       assistantLabel: 'AI interviewer',
       userLabel: 'You',
       empty: 'Click "Start interview" to begin capturing responses.',
+      viewFinal: 'Verified transcript',
+      viewDraft: 'Live capture',
+      draftNotice: 'Live capture in progress ({{count}} draft turns).',
+      draftBadge: 'Draft',
+      reviewBadge: 'Needs review',
+      resolvedBadge: 'Resolved',
+      reviewTitle: 'Transcript review queue',
+      reviewCount: '{{count}} flagged turns',
+      reviewEmpty: 'No review items. You’re all set.',
+      markResolved: 'Mark resolved',
+      dismissResolved: 'Remove from queue',
+      unknownSpeaker: 'Unknown speaker',
+      messageMissing: 'Content not available.',
+      reviewReasons: {
+        long_no_punctuation: 'Long sentence without punctuation; confirm sentence breaks.',
+        repeated_characters: 'Repeated characters detected; verify transcription.',
+        excessive_punctuation: 'Excessive punctuation; confirm emphasis is intended.',
+      },
     },
     postSession: {
       title: 'Interview saved',
@@ -1030,6 +1066,24 @@ const ja: Dictionary = {
       assistantLabel: 'AIインタビュアー',
       userLabel: 'あなた',
       empty: '「インタビューを開始」を押して記録を始めましょう。',
+      viewFinal: '確定テキスト',
+      viewDraft: 'ライブ文字起こし',
+      draftNotice: 'ライブ書き起こしを取り込み中（ドラフト {{count}} 件）。',
+      draftBadge: 'ドラフト',
+      reviewBadge: '要確認',
+      resolvedBadge: '解決済み',
+      reviewTitle: '確認キュー',
+      reviewCount: '{{count}} 件を確認中',
+      reviewEmpty: '確認すべきメッセージはありません。',
+      markResolved: '解決済みにする',
+      dismissResolved: '一覧から外す',
+      unknownSpeaker: '話者不明',
+      messageMissing: '関連する内容が見つかりませんでした。',
+      reviewReasons: {
+        long_no_punctuation: '長文に句読点がありません。文の区切りをご確認ください。',
+        repeated_characters: '同じ文字が続いています。認識内容を確認してください。',
+        excessive_punctuation: '記号が多すぎます。強調が意図されたものか確認してください。',
+      },
     },
     postSession: {
       title: 'インタビューを保存しました',

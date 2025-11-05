@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
 
     const messagesJson = JSON.stringify(Array.isArray(body?.messages) ? body.messages : []);
     const coverageJson = JSON.stringify(Array.isArray(body?.coverage) ? body.coverage : []);
+    const draftsJson = JSON.stringify(Array.isArray(body?.drafts) ? body.drafts : []);
+    const reviewsJson = JSON.stringify(Array.isArray(body?.reviews) ? body.reviews : []);
     const queueJson = JSON.stringify(body?.queue ?? { current: null, pending: [], completed: [] });
     const feedbackJson = JSON.stringify(body?.feedback ?? {});
 
@@ -50,6 +52,8 @@ export async function POST(request: NextRequest) {
         secondsElapsed,
         extensionCount,
         messagesJson,
+        draftsJson,
+        reviewsJson,
         coverageJson,
         queueJson,
         feedbackJson,
@@ -63,6 +67,8 @@ export async function POST(request: NextRequest) {
           secondsElapsed,
           extensionCount,
           messagesJson,
+          draftsJson,
+          reviewsJson,
           coverageJson,
           queueJson,
           feedbackJson,
@@ -99,6 +105,8 @@ export async function GET(request: NextRequest) {
 
     let messages: unknown = [];
     let coverage: unknown = [];
+    let drafts: unknown = [];
+    let reviews: unknown = [];
     let queue: unknown = { current: null, pending: [], completed: [] };
     let feedback: unknown = {};
 
@@ -112,6 +120,18 @@ export async function GET(request: NextRequest) {
       coverage = JSON.parse(row.coverageJson ?? '[]');
     } catch (error) {
       console.warn('Failed to parse autosave coverage JSON:', error);
+    }
+
+    try {
+      drafts = JSON.parse(row.draftsJson ?? '[]');
+    } catch (error) {
+      console.warn('Failed to parse autosave drafts JSON:', error);
+    }
+
+    try {
+      reviews = JSON.parse(row.reviewsJson ?? '[]');
+    } catch (error) {
+      console.warn('Failed to parse autosave reviews JSON:', error);
     }
 
     try {
@@ -135,6 +155,8 @@ export async function GET(request: NextRequest) {
         secondsElapsed: row.secondsElapsed ?? 0,
         extensionCount: row.extensionCount ?? 0,
         messages,
+        drafts,
+        reviews,
         coverage,
         queue,
         feedback,

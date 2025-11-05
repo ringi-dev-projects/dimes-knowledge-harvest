@@ -4,7 +4,7 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 
 ## Upcoming Actions (P0 Execution Order)
 1. Assemble benchmarking dataset & measure Azure Speech vs. Whisper accuracy (per `tasks/azure-speech-spike-plan.md`).
-2. Implement transcript chunk merging, draft vs. verified presentation, and reviewer tooling.
+2. QA the updated transcript pipeline (draft vs. verified view, review queue) with staging pilots and gather interviewer feedback.
 3. QA coverage evidence at scale and prepare admin audit endpoint.
 
 ## Now — P0 Scope
@@ -19,9 +19,9 @@ Use this tracker to record status updates as we execute the roadmap. Align task 
 - ✅ Spike Azure Speech streaming integration behind feature flag; capture accuracy metrics vs. Whisper.
   - 📝 Experiment plan ready (`tasks/azure-speech-spike-plan.md`).
   - ℹ️ Live integration uses `NEXT_PUBLIC_TRANSCRIPTION_ENGINE=azure` with `/api/speech/token` and local chunk merging; benchmarking step still pending.
-- [ ] Implement chunk merging / paragraph smoothing before storing messages.
-- [ ] Add “draft vs. verified” transcript presentation with correction cues.
-- [ ] Build reviewer tooling for mistranscription highlighting.
+- ✅ Implement chunk merging / paragraph smoothing before storing messages.
+- ✅ Add “draft vs. verified” transcript presentation with correction cues.
+- ✅ Build reviewer tooling for mistranscription highlighting.
 
 ### Interviewer prompt design & coverage explainability
 - ✅ Revise interviewer system prompt to reduce answer recitation and add confirmation heuristics.

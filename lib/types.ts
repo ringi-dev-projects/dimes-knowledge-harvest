@@ -65,9 +65,14 @@ export interface CoverageEvidenceSummary {
 
 // Interview Types
 export interface InterviewMessage {
+  id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  status?: 'draft' | 'final';
+  confidence?: number;
+  needsReview?: boolean;
+  reviewReasons?: string[];
   topicId?: string;
 }
 
