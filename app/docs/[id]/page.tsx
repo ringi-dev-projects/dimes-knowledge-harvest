@@ -197,7 +197,7 @@ function SectionContent({ section, isActive }: { section: DocumentSection; isAct
     >
       <h2 className="mb-6 text-3xl font-bold text-slate-900">{section.title}</h2>
       <div
-        className="prose max-w-none prose-lg prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-code:bg-slate-100 prose-code:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700"
+        className="prose max-w-none prose-lg prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-code:bg-slate-100 prose-code:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700 text-black"
         dangerouslySetInnerHTML={{ __html: section.content }}
       />
 
@@ -207,7 +207,7 @@ function SectionContent({ section, isActive }: { section: DocumentSection; isAct
             <div key={sub.id} id={sub.id}>
               <h3 className="text-2xl font-semibold text-slate-900 mb-4">{sub.title}</h3>
               <div
-                className="prose max-w-none prose-base prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700"
+                className="prose max-w-none prose-base prose-headings:text-slate-900 prose-a:text-indigo-600 hover:prose-a:text-indigo-700 prose-strong:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700 text-black"
                 dangerouslySetInnerHTML={{ __html: sub.content }}
               />
             </div>

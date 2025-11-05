@@ -1409,34 +1409,42 @@ export default function InterviewPage() {
           case 'conversation.item.created': {
             const item = payload?.item;
             if (!item) return;
-            if (item.type === 'message') {
-              if (item.role === 'assistant') {
-                const text = (item.content || [])
-                  .filter((part: any) => part?.type === 'text' && part?.text)
-                  .map((part: any) => part.text)
-                  .join('');
-                ensureAssistantDraft(undefined, item.id, text ? text : undefined);
-                if (text) {
-                  markActiveSpeaker('assistant');
-                }
-              } else if (item.role === 'user') {
-                if (isAzureTranscription) {
-                  return;
-                }
-                const text = (item.content || [])
-                  .filter((part: any) => part?.type === 'text' && part?.text)
-                  .map((part: any) => part.text)
-                  .join('');
-                if (!text) {
-                  return;
-                }
-                if (messageIndexRef.current.has(item.id)) {
-                  return;
-                }
-                markActiveSpeaker('user');
-                finalizeDraftMessage(item.id, 'user', text);
-                runAutosave('message');
+          if (item.type === 'message') {
+            if (item.role === 'assistant') {
+              const text = (item.content || [])
+                .filter((part: any) => part?.type === 'text' && part?.text)
+                .map((part: any) => part.text)
+                .join('');
+              ensureAssistantDraft(undefined, item.id, text ? text : undefined);
+              if (text) {
+                markActiveSpeaker('assistant');
               }
+            } else if (item.role === 'user') {
+              if (isAzureTranscription) {
+                return;
+              }
+              const textFromItem = (item.content || [])
+                .filter((part: any) => part?.type === 'text' && part?.text)
+                .map((part: any) => part.text)
+                .join('');
+              let finalText = textFromItem;
+              if (!finalText) {
+                const draftIndex = draftIndexRef.current.get(item.id);
+                if (typeof draftIndex === 'number') {
+                  finalText = draftMessagesRef.current[draftIndex]?.content ?? '';
+                }
+              }
+              if (!finalText.trim()) {
+                return;
+              }
+              if (messageIndexRef.current.has(item.id)) {
+                return;
+              }
+              markActiveSpeaker('user');
+              userItemDraftRef.current.delete(item.id);
+              finalizeDraftMessage(item.id, 'user', finalText);
+              runAutosave('message');
+            }
             } else if (item.type === 'function_call') {
               const callId = item.call_id;
               if (!callId) return;
