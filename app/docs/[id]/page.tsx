@@ -151,7 +151,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
           ))}
         </nav>
 
-        <div className="mt-8">
+        <div className="mt-8 space-y-2">
           <button
             onClick={() => exportDocument('docx')}
             disabled={generating}
@@ -159,6 +159,14 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
           >
             {generating ? '生成中...' : 'DOCXをダウンロード'}
           </button>
+          <a
+            href="https://timelyhero.com/admin/chatbots/new"
+            target="_blank"
+            rel="noreferrer"
+            className="block w-full rounded-md bg-indigo-600 px-4 py-2 text-center text-sm text-white hover:bg-indigo-700"
+          >
+            TimelyAssistでチャットボット作成
+          </a>
         </div>
       </aside>
 
