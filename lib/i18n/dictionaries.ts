@@ -73,6 +73,21 @@ type Dictionary = {
       emptySubtitle: string;
       seedCta: string;
       mockCta: string;
+      viewModes: {
+        listLabel: string;
+        listDescription: string;
+        graphLabel: string;
+        graphDescription: string;
+      };
+      graph: {
+        legendTitle: string;
+        highCoverage: string;
+        mediumCoverage: string;
+        lowCoverage: string;
+        missingLabel: string;
+        nextQuestionsLabel: string;
+        centerLabel: string;
+      };
     };
     interviewsSection: {
       title: string;
