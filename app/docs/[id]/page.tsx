@@ -81,7 +81,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-indigo-600"></div>
-          <p className="mt-4 text-slate-600">Loading documentation...</p>
+          <p className="mt-4 text-slate-600">ドキュメントを読み込み中...</p>
         </div>
       </div>
     );
@@ -91,9 +91,9 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <p className="text-slate-600">No documentation found</p>
+          <p className="text-slate-600">ドキュメントが見つかりません</p>
           <a href="/dashboard" className="mt-4 text-indigo-600 hover:text-indigo-700">
-            Return to Dashboard
+            ダッシュボードへ戻る
           </a>
         </div>
       </div>
@@ -105,10 +105,10 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
       {/* Table of Contents Sidebar */}
       <aside className="w-64 overflow-y-auto border-r border-slate-200 bg-white p-6">
         <div className="mb-6">
-          <h2 className="text-lg font-bold text-slate-900">Knowledge Handbook</h2>
+          <h2 className="text-lg font-bold text-slate-900">ナレッジハンドブック</h2>
           <p className="mt-1 text-sm text-slate-600">{doc.companyName}</p>
           <p className="mt-1 text-xs text-slate-500">
-            Generated {new Date(doc.generatedAt).toLocaleDateString()}
+            生成日 {new Date(doc.generatedAt).toLocaleDateString()}
           </p>
         </div>
 
@@ -152,14 +152,14 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
             disabled={generating}
             className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:bg-slate-400"
           >
-            {generating ? 'Generating...' : 'Download HTML'}
+            {generating ? '生成中...' : 'HTMLをダウンロード'}
           </button>
           <button
             onClick={() => exportDocument('docx')}
             disabled={generating}
             className="w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:bg-slate-100"
           >
-            {generating ? 'Generating...' : 'Download DOCX'}
+            {generating ? '生成中...' : 'DOCXをダウンロード'}
           </button>
         </div>
       </aside>
