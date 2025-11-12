@@ -483,6 +483,21 @@ const en: Dictionary = {
       emptySubtitle: 'Seed topics and launch interviews to see progress here.',
       seedCta: 'Seed Topics',
       mockCta: 'Load Mock Data',
+      viewModes: {
+        listLabel: 'List view',
+        listDescription: 'See detailed metrics, confidence, and follow-up prompts per topic.',
+        graphLabel: 'Knowledge graph',
+        graphDescription: 'Visualize how topics connect, where evidence is strong, and which areas still need input.',
+      },
+      graph: {
+        legendTitle: 'Legend',
+        highCoverage: '>= 80% covered',
+        mediumCoverage: '50-79% covered',
+        lowCoverage: '< 50% covered',
+        missingLabel: 'Unanswered targets',
+        nextQuestionsLabel: 'Next questions queued',
+        centerLabel: 'Company knowledge core',
+      },
     },
     interviewsSection: {
       title: 'Interview History & Highlights',
@@ -928,6 +943,21 @@ const ja: Dictionary = {
       emptySubtitle: 'トピックをシードし、インタビューを開始すると進捗が表示されます。',
       seedCta: 'トピックをシード',
       mockCta: 'モックデータを読み込む',
+      viewModes: {
+        listLabel: 'リストビュー',
+        listDescription: '各トピックの指標・信頼度・追質問を詳細に確認できます。',
+        graphLabel: 'ナレッジグラフ',
+        graphDescription: 'トピック間のつながりや強み/不足領域、追加インプットが必要な箇所を可視化します。',
+      },
+      graph: {
+        legendTitle: '凡例',
+        highCoverage: 'カバレッジ80%以上',
+        mediumCoverage: 'カバレッジ50〜79%',
+        lowCoverage: 'カバレッジ50%未満',
+        missingLabel: '未回答ターゲット',
+        nextQuestionsLabel: '保留中の質問',
+        centerLabel: '会社ナレッジの中枢',
+      },
     },
     interviewsSection: {
       title: 'インタビュー履歴とハイライト',

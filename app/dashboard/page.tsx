@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import Link from "next/link";
 import { CoverageMetrics } from '@/lib/types';
 import { useCompany } from '@/lib/context/CompanyContext';
 import { useLocale } from '@/lib/context/LocaleContext';
 import type { Dictionary, Locale } from '@/lib/i18n/dictionaries';
+import * as d3 from 'd3';
 
 type InterviewSummary = {
   id: number;
@@ -24,37 +26,37 @@ const MOCK_INTERVIEWS: InterviewSummary[] = [
   {
     id: 101,
     companyId: 0,
-    speakerName: 'Alex Johnson',
+    speakerName: '佐藤 里奈',
     startedAt: new Date(Date.now() - 1000 * 60 * 55).toISOString(),
     endedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
     status: 'completed',
-    durationSeconds: 1500,
-    messageCount: 24,
-    knowledgeAtomCount: 6,
+    durationSeconds: 1620,
+    messageCount: 26,
+    knowledgeAtomCount: 7,
     audioUrl: null,
   },
   {
     id: 102,
     companyId: 0,
-    speakerName: 'Jordan Smith',
+    speakerName: '田中 誠',
     startedAt: new Date(Date.now() - 1000 * 60 * 160).toISOString(),
-    endedAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+    endedAt: new Date(Date.now() - 1000 * 60 * 118).toISOString(),
     status: 'completed',
-    durationSeconds: 2400,
-    messageCount: 31,
-    knowledgeAtomCount: 9,
+    durationSeconds: 2300,
+    messageCount: 33,
+    knowledgeAtomCount: 10,
     audioUrl: null,
   },
   {
     id: 103,
     companyId: 0,
-    speakerName: 'Taylor Lee',
+    speakerName: '李 美咲',
     startedAt: new Date(Date.now() - 1000 * 60 * 300).toISOString(),
-    endedAt: new Date(Date.now() - 1000 * 60 * 250).toISOString(),
+    endedAt: new Date(Date.now() - 1000 * 60 * 252).toISOString(),
     status: 'completed',
-    durationSeconds: 1800,
-    messageCount: 27,
-    knowledgeAtomCount: 7,
+    durationSeconds: 1900,
+    messageCount: 29,
+    knowledgeAtomCount: 8,
     audioUrl: null,
   },
 ];
@@ -67,6 +69,7 @@ export default function DashboardPage() {
   const [interviewsLoading, setInterviewsLoading] = useState(true);
   const [resetting, setResetting] = useState(false);
   const [resetFeedback, setResetFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [coverageView, setCoverageView] = useState<'list' | 'graph'>('list');
   const { companyId, companyName, setCompanyId, setCompanyName } = useCompany();
   const { dictionary, locale } = useLocale();
   const tDash = dictionary.dashboard;
@@ -76,6 +79,10 @@ export default function DashboardPage() {
   const interviewsText = tDash.interviewsSection;
   const cardText = tDash.cards;
   const adminText = tDash.admin;
+  const coverageGraphText = coverageText.graph;
+  const coverageViewText = coverageText.viewModes;
+  const coverageViewDescription =
+    coverageView === 'graph' ? coverageViewText.graphDescription : coverageViewText.listDescription;
 
   const loadData = useCallback(async () => {
     if (!companyId && !useMockData) {
@@ -138,6 +145,12 @@ export default function DashboardPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (metrics.length === 0 && coverageView === 'graph') {
+      setCoverageView('list');
+    }
+  }, [metrics.length, coverageView]);
+
   const overallCoverage = metrics.length > 0
     ? Math.round(metrics.reduce((acc, m) => acc + m.coveragePercent, 0) / metrics.length)
     : 0;
@@ -150,8 +163,8 @@ export default function DashboardPage() {
   const docsLink = useMockData
     ? '/docs/1?mock=true'
     : companyId
-    ? `/docs/${companyId}`
-    : '/seed';
+      ? `/docs/${companyId}`
+      : '/seed';
   const docsLabel = !companyId && !useMockData ? tDash.hero.docsDisabled : tDash.hero.docsEnabled;
   const docsButtonClass = !companyId && !useMockData ? 'btn-secondary' : 'btn-primary';
   const recentInterviews = useMockData ? MOCK_INTERVIEWS : interviews;
@@ -279,10 +292,35 @@ export default function DashboardPage() {
       </section>
 
       <section className="section-surface">
-        <div className="flex items-center justify-between gap-3 border-b border-white/80 px-6 py-5">
+        <div className="flex flex-col gap-4 border-b border-white/80 px-6 py-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{coverageText.title}</h2>
             <p className="text-sm text-slate-500">{coverageText.subtitle}</p>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-slate-500 sm:max-w-3xl">{coverageViewDescription}</p>
+            {metrics.length > 0 && (
+              <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-medium text-slate-500 shadow-inner">
+                <button
+                  onClick={() => setCoverageView('list')}
+                  className={`rounded-full px-4 py-1 transition ${coverageView === 'list'
+                      ? 'bg-white text-slate-900 shadow'
+                      : 'hover:text-slate-900'
+                    }`}
+                >
+                  {coverageViewText.listLabel}
+                </button>
+                <button
+                  onClick={() => setCoverageView('graph')}
+                  className={`rounded-full px-4 py-1 transition ${coverageView === 'graph'
+                      ? 'bg-white text-slate-900 shadow'
+                      : 'hover:text-slate-900'
+                    }`}
+                >
+                  {coverageViewText.graphLabel}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -310,6 +348,13 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+        ) : coverageView === 'graph' ? (
+          <TopicCoverageGraph
+            metrics={metrics}
+            graphCopy={coverageGraphText}
+            overallCoverage={overallCoverage}
+            overallLabel={metricsText.coverage.title}
+          />
         ) : (
           <div className="divide-y divide-slate-200/70">
             {metrics.map((metric) => (
@@ -388,11 +433,10 @@ export default function DashboardPage() {
         </div>
         {resetFeedback ? (
           <div
-            className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
-              resetFeedback.type === 'success'
+            className={`mt-4 rounded-xl border px-4 py-3 text-sm ${resetFeedback.type === 'success'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                 : 'border-rose-200 bg-rose-50 text-rose-600'
-            }`}
+              }`}
           >
             {resetFeedback.message}
           </div>
@@ -537,6 +581,450 @@ function formatRelativeTime(date: Date, locale: Locale, timeCopy: Dictionary['co
   }
   const diffDays = Math.round(diffHours / 24);
   return formatter.format(-diffDays, 'day');
+}
+
+type TopicNode = d3.SimulationNodeDatum & {
+  id: string;
+  metric: CoverageMetrics;
+  orbitLevel: number;
+  index: number;
+  x: number;
+  y: number;
+  fx?: number | null;
+  fy?: number | null;
+  tier: 'high' | 'medium' | 'low';
+};
+
+type TopicLink = d3.SimulationLinkDatum<TopicNode> & { isCross?: boolean };
+
+function TopicCoverageGraph({
+  metrics,
+  graphCopy,
+  overallCoverage,
+  overallLabel,
+}: {
+  metrics: CoverageMetrics[];
+  graphCopy: Dictionary['dashboard']['coverageSection']['graph'];
+  overallCoverage: number;
+  overallLabel: string;
+}) {
+  const [hoveredTopic, setHoveredTopic] = useState<string | null>(null);
+  const [graphNodes, setGraphNodes] = useState<TopicNode[]>([]);
+  const simulationRef = useRef<d3.Simulation<TopicNode, TopicLink> | null>(null);
+  const nodeStoreRef = useRef<TopicNode[]>([]);
+  const dragState = useRef<{ id: string | null; pointerId: number | null }>({ id: null, pointerId: null });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerHeight = 520;
+  const [containerWidth, setContainerWidth] = useState(960);
+
+  const viewWidth = Math.max(960, metrics.length * 150);
+  const viewHeight = containerHeight;
+  const center = { x: viewWidth / 2, y: viewHeight / 2 };
+  const baseRadius = Math.max(Math.min(viewWidth, viewHeight) / 2 - 140, 160);
+
+  const tierStyles: Record<'high' | 'medium' | 'low', { badge: string; bar: string; line: string }> = {
+    high: {
+      badge: 'bg-emerald-100 text-emerald-700',
+      bar: 'from-emerald-400 to-emerald-500',
+      line: 'rgba(16, 185, 129, 0.4)',
+    },
+    medium: {
+      badge: 'bg-amber-100 text-amber-700',
+      bar: 'from-amber-400 to-amber-500',
+      line: 'rgba(245, 158, 11, 0.4)',
+    },
+    low: {
+      badge: 'bg-rose-100 text-rose-700',
+      bar: 'from-rose-400 to-rose-500',
+      line: 'rgba(244, 63, 94, 0.35)',
+    },
+  };
+
+  const crossLinks = useMemo(() => {
+    if (metrics.length < 2) {
+      return [];
+    }
+    const step = Math.max(1, Math.floor(metrics.length / 3));
+    const links: Array<{ source: string; target: string }> = [];
+    metrics.forEach((metric, index) => {
+      const targetIndex = (index + step) % metrics.length;
+      const sourceId = metric.topicId;
+      const targetId = metrics[targetIndex].topicId;
+      if (sourceId === targetId) {
+        return;
+      }
+      if (index <= targetIndex) {
+        links.push({ source: sourceId, target: targetId });
+      } else {
+        links.push({ source: targetId, target: sourceId });
+      }
+    });
+    return links;
+  }, [metrics]);
+
+  const [visibleTiers, setVisibleTiers] = useState<Record<'high' | 'medium' | 'low', boolean>>({
+    high: true,
+    medium: true,
+    low: true,
+  });
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      setContainerWidth(containerRef.current.clientWidth);
+    }
+  }, [viewWidth]);
+
+  const scaleX = containerWidth > 0 ? containerWidth / viewWidth : 1;
+  const scaleY = containerHeight / viewHeight;
+  const centerScaled = { x: center.x * scaleX, y: center.y * scaleY };
+
+  useEffect(() => {
+    if (metrics.length === 0) {
+      setGraphNodes([]);
+      simulationRef.current?.stop();
+      simulationRef.current = null;
+      return;
+    }
+
+    const allowedTiers = new Set(
+      (Object.entries(visibleTiers).filter(([, enabled]) => enabled).map(([tier]) => tier) as Array<
+        'high' | 'medium' | 'low'
+      >) || []
+    );
+
+    const nodesData: TopicNode[] = metrics
+      .map((metric, index) => {
+        const angle = (index / metrics.length) * 2 * Math.PI - Math.PI / 2;
+        const orbitLevel = index % 3;
+        const orbitRadius = baseRadius + orbitLevel * 120;
+        const tier: 'high' | 'medium' | 'low' =
+          metric.coveragePercent >= 80 ? 'high' : metric.coveragePercent >= 50 ? 'medium' : 'low';
+        return {
+          id: metric.topicId,
+          metric,
+          orbitLevel,
+          index,
+          x: center.x + orbitRadius * Math.cos(angle),
+          y: center.y + orbitRadius * Math.sin(angle),
+          tier,
+        };
+      })
+      .filter((node) => allowedTiers.has(node.tier));
+
+    if (nodesData.length === 0) {
+      setGraphNodes([]);
+      simulationRef.current?.stop();
+      simulationRef.current = null;
+      return;
+    }
+
+    nodeStoreRef.current = nodesData;
+    setGraphNodes(nodesData.map((node) => ({ ...node })));
+
+    const activeNodeIds = new Set(nodesData.map((node) => node.id));
+    const linksData: TopicLink[] = crossLinks
+      .filter((link) => activeNodeIds.has(link.source) && activeNodeIds.has(link.target))
+      .map((link) => ({
+        source: link.source,
+        target: link.target,
+        isCross: true,
+      }));
+
+    const simulation = d3
+      .forceSimulation<TopicNode>(nodesData)
+      .force('center', d3.forceCenter(center.x, center.y))
+      .force('charge', d3.forceManyBody().strength(-320))
+      .force('collision', d3.forceCollide<TopicNode>().radius(150).strength(1))
+      .force(
+        'link',
+        d3
+          .forceLink<TopicNode, TopicLink>(linksData)
+          .id((d) => d.id)
+          .distance(260)
+          .strength(0.3)
+      )
+      .force(
+        'radial',
+        d3
+          .forceRadial<TopicNode>((node) => baseRadius + (node.orbitLevel ?? 0) * 90, center.x, center.y)
+          .strength(0.06)
+      )
+      .alpha(0.9)
+      .on('tick', () => {
+        setGraphNodes(nodesData.map((node) => ({ ...node })));
+      });
+
+    simulationRef.current = simulation;
+
+    return () => {
+      simulation.stop();
+      simulationRef.current = null;
+    };
+  }, [metrics, crossLinks, center.x, center.y, baseRadius, visibleTiers]);
+
+  const convertClientToSimulation = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return { simX: center.x, simY: center.y };
+      }
+      const relativeX = (clientX - rect.left) / rect.width;
+      const relativeY = (clientY - rect.top) / rect.height;
+      return {
+        simX: relativeX * viewWidth,
+        simY: relativeY * viewHeight,
+      };
+    },
+    [viewWidth, viewHeight, center.x, center.y]
+  );
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, nodeId: string) => {
+      event.preventDefault();
+      dragState.current = { id: nodeId, pointerId: event.pointerId };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const { simX, simY } = convertClientToSimulation(event.clientX, event.clientY);
+      const node = nodeStoreRef.current.find((n) => n.id === nodeId);
+      if (node) {
+        node.fx = simX;
+        node.fy = simY;
+      }
+      simulationRef.current?.alphaTarget(0.3).restart();
+      setHoveredTopic(nodeId);
+    },
+    [convertClientToSimulation]
+  );
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, nodeId: string) => {
+      if (dragState.current.id !== nodeId) {
+        return;
+      }
+      const { simX, simY } = convertClientToSimulation(event.clientX, event.clientY);
+      const node = nodeStoreRef.current.find((n) => n.id === nodeId);
+      if (node) {
+        node.fx = simX;
+        node.fy = simY;
+      }
+    },
+    [convertClientToSimulation]
+  );
+
+  const releaseDrag = useCallback((nodeId: string) => {
+    const node = nodeStoreRef.current.find((n) => n.id === nodeId);
+    if (node) {
+      node.fx = null;
+      node.fy = null;
+    }
+    dragState.current = { id: null, pointerId: null };
+    simulationRef.current?.alphaTarget(0);
+    setHoveredTopic(null);
+  }, []);
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, nodeId: string) => {
+      if (dragState.current.id !== nodeId) {
+        return;
+      }
+      event.currentTarget.releasePointerCapture(dragState.current.pointerId ?? event.pointerId);
+      releaseDrag(nodeId);
+    },
+    [releaseDrag]
+  );
+
+  const legendItems = [
+    { tier: 'high' as const, color: 'bg-emerald-400', label: graphCopy.highCoverage },
+    { tier: 'medium' as const, color: 'bg-amber-400', label: graphCopy.mediumCoverage },
+    { tier: 'low' as const, color: 'bg-rose-400', label: graphCopy.lowCoverage },
+  ];
+
+  const scaledNodes = graphNodes.map((node) => ({
+    ...node,
+    scaledX: (node.x ?? center.x) * scaleX,
+    scaledY: (node.y ?? center.y) * scaleY,
+  }));
+
+  const nodePositionMap = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    scaledNodes.forEach((node) => {
+      map.set(node.metric.topicId, { x: node.scaledX, y: node.scaledY });
+    });
+    return map;
+  }, [scaledNodes]);
+
+  const svgWidth = Math.max(containerWidth, 1);
+  const circleRadius = 70 * Math.min(scaleX, scaleY);
+
+  return (
+    <div className="px-2 py-8">
+      <div
+        ref={containerRef}
+        className="relative mx-auto w-full max-w-5xl"
+        style={{ height: `${containerHeight}px` }}
+      >
+        <svg
+          width={svgWidth}
+          height={containerHeight}
+          className="pointer-events-none absolute inset-0"
+        >
+          {scaledNodes.map((node) => {
+            const tierStyle =
+              tierStyles[node.metric.coveragePercent >= 80 ? 'high' : node.metric.coveragePercent >= 50 ? 'medium' : 'low'];
+            return (
+              <line
+                key={`line-${node.metric.topicId}`}
+                x1={centerScaled.x}
+                y1={centerScaled.y}
+                x2={node.scaledX}
+                y2={node.scaledY}
+                stroke={tierStyle?.line ?? 'rgba(148, 163, 184, 0.5)'}
+                strokeWidth={hoveredTopic === node.metric.topicId ? 3 : 1.6}
+                strokeDasharray={Math.max(node.metric.targetQuestions - node.metric.answeredQuestions, 0) > 0 ? '8 6' : '0'}
+                opacity={hoveredTopic && hoveredTopic !== node.metric.topicId ? 0.25 : 1}
+              />
+            );
+          })}
+          {crossLinks.map((link, idx) => {
+            const source = nodePositionMap.get(link.source);
+            const target = nodePositionMap.get(link.target);
+            if (!source || !target) {
+              return null;
+            }
+            return (
+              <line
+                key={`cross-${idx}`}
+                x1={source.x}
+                y1={source.y}
+                x2={target.x}
+                y2={target.y}
+                stroke="rgba(99, 102, 241, 0.25)"
+                strokeWidth={1.2}
+                strokeDasharray="4 4"
+              />
+            );
+          })}
+          <circle
+            cx={centerScaled.x}
+            cy={centerScaled.y}
+            r={circleRadius}
+            fill="rgba(79, 70, 229, 0.08)"
+            stroke="rgba(79, 70, 229, 0.25)"
+            strokeDasharray="6 4"
+          />
+        </svg>
+
+        <div className="absolute left-1/2 top-1/2 w-56 -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-indigo-100 bg-white/95 p-5 text-center shadow-lg">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">{graphCopy.centerLabel}</p>
+          <p className="mt-2 text-4xl font-semibold text-slate-900">{overallCoverage}%</p>
+          <p className="text-xs text-slate-500">{overallLabel}</p>
+        </div>
+
+        {scaledNodes.map((node) => {
+          const tierStyle =
+            tierStyles[node.metric.coveragePercent >= 80 ? 'high' : node.metric.coveragePercent >= 50 ? 'medium' : 'low'];
+          const isDimmed = hoveredTopic && hoveredTopic !== node.metric.topicId;
+          return (
+            <div
+              key={node.metric.topicId}
+              className="absolute w-44 -translate-x-1/2 -translate-y-1/2"
+              style={{ left: node.scaledX, top: node.scaledY }}
+            >
+              <div
+                className={`rounded-2xl border border-white/80 bg-white/95 p-4 shadow-lg ring-1 ring-slate-900/5 backdrop-blur transition duration-300 ${isDimmed ? 'opacity-60 blur-[0.2px]' : 'opacity-100'
+                  } cursor-grab active:cursor-grabbing`}
+                style={{
+                  animation: `float ${8 + node.orbitLevel}s ease-in-out infinite`,
+                  animationDelay: `${node.index * 0.12}s`,
+                }}
+                onPointerDown={(event) => handlePointerDown(event, node.metric.topicId)}
+                onPointerMove={(event) => handlePointerMove(event, node.metric.topicId)}
+                onPointerUp={(event) => handlePointerUp(event, node.metric.topicId)}
+                onPointerCancel={(event) => handlePointerUp(event, node.metric.topicId)}
+                onMouseEnter={() => setHoveredTopic(node.metric.topicId)}
+                onMouseLeave={() => {
+                  if (dragState.current.id !== node.metric.topicId) {
+                    setHoveredTopic(null);
+                  }
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold leading-tight text-slate-900">{node.metric.topicName}</p>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tierStyle?.badge ?? 'bg-slate-100 text-slate-600'}`}>
+                    {node.metric.coveragePercent}%
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200/80">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${tierStyle?.bar ?? 'from-slate-400 to-slate-500'} transition-[width] duration-500`}
+                    style={{ width: `${node.metric.coveragePercent}%` }}
+                  />
+                </div>
+                <dl className="mt-3 space-y-1 text-xs text-slate-600">
+                  <div className="flex justify-between gap-3">
+                    <dt>{graphCopy.missingLabel}</dt>
+                    <dd className="font-semibold text-slate-900">
+                      {Math.max(node.metric.targetQuestions - node.metric.answeredQuestions, 0)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>{graphCopy.nextQuestionsLabel}</dt>
+                    <dd className="font-semibold text-slate-900">{node.metric.nextQuestions?.length ?? 0}</dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-8 space-y-3 px-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{graphCopy.legendTitle}</p>
+        <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+          {legendItems.map((item) => (
+            <button
+              key={item.tier}
+              type="button"
+              onClick={() =>
+                setVisibleTiers((prev) => ({
+                  ...prev,
+                  [item.tier]: !prev[item.tier],
+                }))
+              }
+              className={`flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-left transition ${visibleTiers[item.tier] ? 'bg-white/90 shadow-sm' : 'bg-slate-50 text-slate-400'
+                }`}
+            >
+              <span className={`h-2 w-10 rounded-full ${item.color}`} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <style jsx global>{`
+        @keyframes float {
+          0% {
+            transform: translateY(0px);
+          }
+          50% {
+            transform: translateY(6px);
+          }
+          100% {
+            transform: translateY(0px);
+          }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 function TopicCoverageRow({ metric, coverageCopy }: { metric: CoverageMetrics; coverageCopy: Dictionary['dashboard']['cards']['coverage'] }) {
