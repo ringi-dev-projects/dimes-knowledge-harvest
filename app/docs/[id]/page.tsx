@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, use, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 interface DocumentSection {
   id: string;
@@ -17,6 +18,8 @@ interface DocumentData {
 
 export default function DocumentationPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
+  const searchParams = useSearchParams();
+  const useMockData = searchParams?.get('mock') === 'true';
   const [doc, setDoc] = useState<DocumentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<string>('');
@@ -25,7 +28,8 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
   const loadDocument = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/docs/${resolvedParams.id}`);
+      const mockQuery = useMockData ? '?mock=true' : '';
+      const response = await fetch(`/api/docs/${resolvedParams.id}${mockQuery}`);
       if (response.ok) {
         const data = await response.json();
         setDoc(data.document);
@@ -38,7 +42,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
     } finally {
       setLoading(false);
     }
-  }, [resolvedParams.id]);
+  }, [resolvedParams.id, useMockData]);
 
   useEffect(() => {
     loadDocument();
@@ -55,6 +59,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
         body: JSON.stringify({
           companyId: resolvedParams.id,
           format,
+          mock: useMockData,
         }),
       });
 
@@ -146,14 +151,7 @@ export default function DocumentationPage({ params }: { params: Promise<{ id: st
           ))}
         </nav>
 
-        <div className="mt-8 space-y-2">
-          <button
-            onClick={() => exportDocument('html')}
-            disabled={generating}
-            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:bg-slate-400"
-          >
-            {generating ? '生成中...' : 'HTMLをダウンロード'}
-          </button>
+        <div className="mt-8">
           <button
             onClick={() => exportDocument('docx')}
             disabled={generating}

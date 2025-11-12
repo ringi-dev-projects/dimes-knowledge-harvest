@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
+import { Document, Packer, Paragraph, HeadingLevel } from 'docx';
+import { load } from 'cheerio';
+import type { AnyNode } from 'domhandler';
+import { type MockDocument } from '@/app/api/docs/mockData';
+import { resolveDocument } from '@/app/api/docs/documentService';
 
 export async function POST(request: NextRequest) {
   try {
-    const { companyId, format } = await request.json();
+    const { companyId, format, mock } = await request.json();
+
+    if (!companyId) {
+      return NextResponse.json({ error: 'Missing company ID' }, { status: 400 });
+    }
 
     if (!format || !['html', 'docx'].includes(format)) {
       return NextResponse.json(
@@ -12,31 +20,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch document data (for demo, using mock data)
-    const mockContent = {
-      companyName: 'ラティスストリーム・テクノロジーズ株式会社',
-      sections: [
-        {
-          title: '企業オリエンテーションとミッション',
-          content: 'ラティスストリームは分散チームのナレッジをガイド付きワークフローへ変換し、Day1から自信を持って働ける環境を提供します。',
-        },
-        {
-          title: 'ガイド付きオンボーディングフレームワーク',
-          content: '90日間のオンボーディングアークでは、バディ制度・コーホート儀式・成果ダッシュボードを通じて進捗を可視化します。',
-        },
-        {
-          title: 'ツールとアクセスレベル',
-          content: 'Day0アクセスはOktaとAccessBotで自動付与し、Sandbox→Development→Staging→Productionの順にガードレールを強化します。',
-        },
-        {
-          title: '30/60/90日成功指標',
-          content: '30日で文脈理解、60日で自走、90日で改善提案を行い、各マイルストーンはオンボーディングダッシュボードで証跡化されます。',
-        },
-      ],
-    };
+    const parsedCompanyId =
+      typeof companyId === 'number' ? companyId : Number.parseInt(companyId, 10);
+
+    if (mock !== true && Number.isNaN(parsedCompanyId)) {
+      return NextResponse.json({ error: 'Invalid company ID' }, { status: 400 });
+    }
+
+    const docContent = await resolveDocument({
+      companyId: Number.isNaN(parsedCompanyId) ? -1 : parsedCompanyId,
+      useMock: mock === true,
+    });
 
     if (format === 'html') {
-      const html = generateHTML(mockContent);
+      const html = generateHTML(docContent);
       return new NextResponse(html, {
         headers: {
           'Content-Type': 'text/html',
@@ -44,31 +41,20 @@ export async function POST(request: NextRequest) {
         },
       });
     } else {
-      // Generate DOCX
       const doc = new Document({
         sections: [
           {
             properties: {},
             children: [
               new Paragraph({
-                text: `${mockContent.companyName} - Knowledge Handbook`,
+                text: `${docContent.companyName} - Knowledge Handbook`,
                 heading: HeadingLevel.TITLE,
               }),
               new Paragraph({
-                text: `Generated on ${new Date().toLocaleDateString()}`,
+                text: `Generated on ${new Date(docContent.generatedAt).toLocaleDateString()}`,
                 spacing: { after: 400 },
               }),
-              ...mockContent.sections.flatMap((section) => [
-                new Paragraph({
-                  text: section.title,
-                  heading: HeadingLevel.HEADING_1,
-                  spacing: { before: 400, after: 200 },
-                }),
-                new Paragraph({
-                  text: section.content,
-                  spacing: { after: 200 },
-                }),
-              ]),
+              ...buildDocxParagraphs(docContent),
             ],
           },
         ],
@@ -93,7 +79,111 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function generateHTML(content: any): string {
+type DocumentSection = MockDocument['sections'][number];
+
+const headingLevels = [
+  HeadingLevel.HEADING_1,
+  HeadingLevel.HEADING_2,
+  HeadingLevel.HEADING_3,
+  HeadingLevel.HEADING_4,
+  HeadingLevel.HEADING_5,
+  HeadingLevel.HEADING_6,
+];
+
+function buildDocxParagraphs(content: MockDocument) {
+  return content.sections.flatMap((section) => buildSectionParagraphs(section, 1));
+}
+
+function buildSectionParagraphs(section: DocumentSection, depth: number): Paragraph[] {
+  const paragraphs: Paragraph[] = [
+    new Paragraph({
+      text: section.title,
+      heading: headingLevels[Math.min(depth - 1, headingLevels.length - 1)],
+      spacing: { before: depth === 1 ? 400 : 200, after: 160 },
+    }),
+  ];
+
+  const textBlocks = extractTextBlocks(section.content);
+  textBlocks.forEach((text) => {
+    paragraphs.push(
+      new Paragraph({
+        text,
+        spacing: { after: 120 },
+      })
+    );
+  });
+
+  (section.subsections ?? []).forEach((subsection) => {
+    paragraphs.push(...buildSectionParagraphs(subsection, depth + 1));
+  });
+
+  return paragraphs;
+}
+
+function extractTextBlocks(html: string): string[] {
+  const $ = load(`<body>${html}</body>`);
+  const blocks: string[] = [];
+
+  const pushText = (text: string, prefix: string | null = null) => {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized) {
+      blocks.push(prefix ? `${prefix} ${normalized}` : normalized);
+    }
+  };
+
+  const processNode = (node: AnyNode, listPrefix: string | null = null) => {
+    if (node.type === 'text') {
+      pushText(node.data || '', listPrefix);
+      return;
+    }
+
+    if (node.type !== 'tag') {
+      return;
+    }
+
+    const tag = node.tagName?.toLowerCase();
+    const element = $(node);
+
+    switch (tag) {
+      case 'p':
+      case 'div':
+      case 'section':
+        pushText(element.text());
+        break;
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6':
+        pushText(element.text());
+        break;
+      case 'ul':
+      case 'ol':
+        element.children('li').each((_, li) => processNode(li, '-'));
+        break;
+      case 'li':
+        {
+          const clone = element.clone();
+          clone.children('ul,ol').remove();
+          pushText(clone.text(), listPrefix ?? '-');
+          element.children('ul,ol').each((_, child) => processNode(child, listPrefix));
+        }
+        break;
+      default:
+        element.contents().each((_, child) => processNode(child, listPrefix));
+    }
+  };
+
+  const wrapper = $('body').first();
+  wrapper.contents().each((_, node) => {
+    processNode(node);
+  });
+
+  return blocks;
+}
+
+function generateHTML(content: MockDocument): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -170,7 +260,7 @@ function generateHTML(content: any): string {
   <div class="header">
     <h1>${content.companyName}</h1>
     <h2>Knowledge Handbook</h2>
-    <p class="generated-date">Generated on ${new Date().toLocaleDateString()}</p>
+    <p class="generated-date">Generated on ${new Date(content.generatedAt).toLocaleDateString()}</p>
   </div>
 
   <div class="toc">
@@ -185,7 +275,17 @@ function generateHTML(content: any): string {
   ${content.sections.map((section: any, idx: number) => `
     <div class="section" id="section-${idx}">
       <h2>${section.title}</h2>
-      <p>${section.content}</p>
+      <div>${section.content}</div>
+      ${(section.subsections ?? [])
+        .map(
+          (sub: any) => `
+          <div class="subsection">
+            <h3>${sub.title}</h3>
+            <div>${sub.content}</div>
+          </div>
+        `
+        )
+        .join('')}
     </div>
   `).join('')}
 
