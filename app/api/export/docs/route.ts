@@ -14,19 +14,23 @@ export async function POST(request: NextRequest) {
 
     // Fetch document data (for demo, using mock data)
     const mockContent = {
-      companyName: 'Acme Manufacturing Co.',
+      companyName: 'ラティスストリーム・テクノロジーズ株式会社',
       sections: [
         {
-          title: 'Products & Services',
-          content: 'Acme Manufacturing specializes in precision automotive components...',
+          title: '企業オリエンテーションとミッション',
+          content: 'ラティスストリームは分散チームのナレッジをガイド付きワークフローへ変換し、Day1から自信を持って働ける環境を提供します。',
         },
         {
-          title: 'Manufacturing Processes',
-          content: 'Our manufacturing facility operates on a lean production system...',
+          title: 'ガイド付きオンボーディングフレームワーク',
+          content: '90日間のオンボーディングアークでは、バディ制度・コーホート儀式・成果ダッシュボードを通じて進捗を可視化します。',
         },
         {
-          title: 'Equipment & Machinery',
-          content: 'Primary equipment inventory includes CNC machines, furnaces, and quality control systems...',
+          title: 'ツールとアクセスレベル',
+          content: 'Day0アクセスはOktaとAccessBotで自動付与し、Sandbox→Development→Staging→Productionの順にガードレールを強化します。',
+        },
+        {
+          title: '30/60/90日成功指標',
+          content: '30日で文脈理解、60日で自走、90日で改善提案を行い、各マイルストーンはオンボーディングダッシュボードで証跡化されます。',
         },
       ],
     };
